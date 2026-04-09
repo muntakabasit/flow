@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flow - Interface em Português</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #FFFEF9;
+            min-height: 100vh;
+            padding: 0;
+            overflow-x: hidden;
+        }
+        
+        .trust-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: #000000;
+            padding: 10px 32px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            z-index: 100;
+            border-bottom: 3px solid #D4AF37;
+        }
+        
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            background: #10B981;
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.1); }
+        }
+        
+        .trust-text {
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 0.1em;
+            color: #FFFFFF;
+            text-transform: uppercase;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 80px 32px 40px 32px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            margin-bottom: 60px;
+        }
+        
+        .wordmark {
+            font-size: 72px;
+            font-weight: 900;
+            letter-spacing: 0.4em;
+            color: #000000;
+            line-height: 0.9;
+            margin-bottom: 12px;
+        }
+        
+        .subtitle {
+            font-size: 14px;
+            font-weight: 500;
+            letter-spacing: 0.15em;
+            color: #666666;
+            text-transform: uppercase;
+        }
+        
+        .subtitle::before,
+        .subtitle::after {
+            content: '"';
+            color: #D4AF37;
+        }
+        
+        .language-status {
+            margin-top: 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        
+        .lang-active {
+            color: #000000;
+        }
+        
+        .lang-arrow {
+            color: #D4AF37;
+            font-size: 16px;
+        }
+        
+        .lang-inactive {
+            color: #999999;
+        }
+        
+        .content-grid {
+            display: grid;
+            grid-template-columns: 5px 1fr;
+            gap: 32px;
+            flex: 1;
+        }
+        
+        .gold-spine {
+            background: #D4AF37;
+            width: 5px;
+            position: relative;
+        }
+        
+        .spine-label {
+            position: absolute;
+            top: 0;
+            left: 12px;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            color: #D4AF37;
+            text-transform: uppercase;
+            writing-mode: vertical-lr;
+            transform: rotate(180deg);
+        }
+        
+        .content-column {
+            display: flex;
+            flex-direction: column;
+            gap: 48px;
+        }
+        
+        .translation-panel {
+            background: #FFFFFF;
+            border: 2px solid #000000;
+            padding: 32px;
+            position: relative;
+        }
+        
+        .panel-label {
+            position: absolute;
+            top: -12px;
+            left: 24px;
+            background: #FFFEF9;
+            padding: 0 8px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            color: #000000;
+            text-transform: uppercase;
+        }
+        
+        .panel-label::before,
+        .panel-label::after {
+            content: '"';
+            color: #D4AF37;
+        }
+        
+        .translation-turn {
+            margin-bottom: 40px;
+        }
+        
+        .translation-turn:last-child {
+            margin-bottom: 0;
+        }
+        
+        .turn-header {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        
+        .turn-label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #000000;
+        }
+        
+        .turn-label::before,
+        .turn-label::after {
+            content: '"';
+            color: #D4AF37;
+        }
+        
+        .turn-lang {
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            color: #999999;
+        }
+        
+        .turn-text {
+            font-size: 19px;
+            font-weight: 500;
+            line-height: 1.6;
+            color: #000000;
+            margin-bottom: 24px;
+        }
+        
+        .turn-text.source {
+            font-size: 22px;
+            font-weight: 600;
+        }
+        
+        .turn-divider {
+            height: 2px;
+            background: #D4AF37;
+            width: 80px;
+            margin: 24px 0;
+        }
+        
+        .turn-text.translation {
+            font-size: 18px;
+            font-weight: 400;
+            opacity: 0.75;
+        }
+        
+        .orb-section {
+            display: flex;
+            align-items: flex-start;
+            gap: 40px;
+            margin-top: auto;
+            padding-top: 60px;
+        }
+        
+        .orb-container {
+            position: relative;
+            width: 160px;
+            height: 160px;
+            flex-shrink: 0;
+        }
+        
+        .adinkra-layer {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            opacity: 0.75;
+            z-index: 1;
+        }
+        
+        .orb-base {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: #000000;
+            border-radius: 50%;
+            z-index: 2;
+        }
+        
+        .orb-ring {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border: 5px solid #D4AF37;
+            border-radius: 50%;
+            z-index: 3;
+            box-sizing: border-box;
+        }
+        
+        .orb-icon {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 4;
+        }
+        
+        .orb-icon svg {
+            width: 48px;
+            height: 48px;
+            color: #FFFFFF;
+        }
+        
+        .orb-instructions {
+            flex: 1;
+            padding-top: 20px;
+        }
+        
+        .instruction-label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: #D4AF37;
+            margin-bottom: 12px;
+        }
+        
+        .instruction-label::before,
+        .instruction-label::after {
+            content: '"';
+        }
+        
+        .instruction-primary {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #000000;
+            margin-bottom: 20px;
+            line-height: 1.2;
+        }
+        
+        .instruction-text {
+            font-size: 13px;
+            font-weight: 500;
+            line-height: 1.8;
+            color: #666666;
+            letter-spacing: 0.03em;
+            max-width: 400px;
+        }
+        
+        .microcopy-block {
+            margin-top: 24px;
+            padding: 16px;
+            border-left: 3px solid #D4AF37;
+            background: rgba(212, 175, 55, 0.05);
+        }
+        
+        .microcopy {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: #000000;
+            line-height: 1.8;
+        }
+        
+        .lang-badge {
+            position: fixed;
+            top: 80px;
+            right: 32px;
+            background: #D4AF37;
+            color: #000000;
+            padding: 8px 16px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            border: 2px solid #000000;
+        }
+        
+        @media (max-width: 768px) {
+            .wordmark {
+                font-size: 48px;
+                letter-spacing: 0.3em;
+            }
+            
+            .content-grid {
+                grid-template-columns: 3px 1fr;
+                gap: 20px;
+            }
+            
+            .orb-section {
+                flex-direction: column;
+            }
+            
+            .orb-container {
+                width: 140px;
+                height: 140px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="lang-badge">INTERFACE PT</div>
+    
+    <div class="trust-bar">
+        <div class="status-indicator"></div>
+        <span class="trust-text">Ao vivo · Português (Brasil) ↔ English</span>
+    </div>
+    
+    <div class="container">
+        <div class="header">
+            <div class="wordmark">F L O W</div>
+            <div class="subtitle">INTÉRPRETE DA DIÁSPORA</div>
+            <div class="language-status">
+                <span class="lang-active">PORTUGUÊS (BRASIL)</span>
+                <span class="lang-arrow">↔</span>
+                <span class="lang-inactive">ENGLISH</span>
+            </div>
+        </div>
+        
+        <div class="content-grid">
+            <div class="gold-spine">
+                <div class="spine-label">SISTEMA FLOW</div>
+            </div>
+            
+            <div class="content-column">
+                <div class="translation-panel">
+                    <div class="panel-label">TRADUÇÃO</div>
+                    
+                    <div class="translation-turn">
+                        <div class="turn-header">
+                            <span class="turn-label">VOCÊ DISSE</span>
+                            <span class="turn-lang">— PT</span>
+                        </div>
+                        <div class="turn-text source">
+                            eles continuam. Estou tentando fazer alguma coisa hoje como eu não tenho nada para fazer.
+                        </div>
+                        
+                        <div class="turn-divider"></div>
+                        
+                        <div class="turn-header">
+                            <span class="turn-label">ELES OUVIRAM</span>
+                            <span class="turn-lang">— EN</span>
+                        </div>
+                        <div class="turn-text translation">
+                            they continue. I'm trying to do something today as I have nothing to do.
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="orb-section">
+                    <div class="orb-container">
+                        <svg class="adinkra-layer" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M 50 80 Q 50 60, 55 50 Q 60 40, 70 45 Q 75 50, 72 60 Q 68 70, 60 72 Q 52 74, 50 68" 
+                                  fill="none" stroke="#D4AF37" stroke-width="3" stroke-linecap="round"/>
+                            <path d="M 50 68 Q 48 75, 52 82" 
+                                  fill="none" stroke="#D4AF37" stroke-width="3" stroke-linecap="round"/>
+                            <path d="M 110 80 Q 110 60, 105 50 Q 100 40, 90 45 Q 85 50, 88 60 Q 92 70, 100 72 Q 108 74, 110 68" 
+                                  fill="none" stroke="#D4AF37" stroke-width="3" stroke-linecap="round"/>
+                            <path d="M 110 68 Q 112 75, 108 82" 
+                                  fill="none" stroke="#D4AF37" stroke-width="3" stroke-linecap="round"/>
+                            <path d="M 55 90 L 60 95 L 100 95 L 105 90" 
+                                  fill="none" stroke="#D4AF37" stroke-width="2.5" stroke-linecap="round"/>
+                        </svg>
+                        
+                        <div class="orb-base"></div>
+                        <div class="orb-ring"></div>
+                        <div class="orb-icon">
+                            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M12 15C13.6569 15 15 13.6569 15 12V6C15 4.34315 13.6569 3 12 3C10.3431 3 9 4.34315 9 6V12C9 13.6569 10.3431 15 12 15Z" 
+                                      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M19 12C19 15.866 15.866 19 12 19M12 19C8.13401 19 5 15.866 5 12M12 19V22M12 22H15M12 22H9" 
+                                      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </div>
+                    </div>
+                    
+                    <div class="orb-instructions">
+                        <div class="instruction-label">"INSTRUÇÃO"</div>
+                        <div class="instruction-primary">SEGURE PARA FALAR</div>
+                        <div class="instruction-text">
+                            Segure o orbe para ativar a tradução ao vivo. 
+                            Fale do seu jeito. O Flow se adapta à sua voz.
+                        </div>
+                        
+                        <div class="microcopy-block">
+                            <div class="microcopy">
+                                SEU SOTAQUE PERTENCE AQUI.<br>
+                                FALE COMO VOCÊ É. O FLOW SE ADAPTA.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

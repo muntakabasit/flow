@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Flow Local — Bilingual Interpreter (100% local, no cloud)",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["server_local.py"],
+      "port": 8765
+    },
+    {
+      "name": "Flow Prototype — OpenAI Realtime proxy",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["server.py"],
+      "port": 8765
+    }
+  ]
+}

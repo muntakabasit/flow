@@ -1,0 +1,348 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		09DE012B9A2A6F443888AD4E /* SharedViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE625F1D0C4E61C76411B02C /* SharedViews.swift */; };
+		0CAA8E9E65E16C2FBAADDA7A /* TranslatingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D34646741C54EAAC614FBFD5 /* TranslatingView.swift */; };
+		5082D5CE1BCF49A88A036DE2 /* ReadyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BCFD1CA3DA77BAA14C46F11 /* ReadyView.swift */; };
+		55763A05FE5818FA0ECB8778 /* FlowStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C812A7BF507EB97A8A6078D8 /* FlowStrings.swift */; };
+		7233A2B63C7B05FDA7573B08 /* FlowSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95C8E6423B517D7EC84FFB23 /* FlowSession.swift */; };
+		7DA124FA9A87FE2950030F7E /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97CC50DAE1422B8C503D5BB3 /* HistoryView.swift */; };
+		7FA105BED382014EF65C3AD8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7D1051581E29C9DE2D57CC09 /* Assets.xcassets */; };
+		AA455758A6A6BA6AD34ADDA9 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 085758CED45C43FDD7E6955C /* RootView.swift */; };
+		C4BA2A4188527BD53F05E383 /* FlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63EBB2707EFF11B4A48C901E /* FlowApp.swift */; };
+		E0599BEF0FBC0C8A5AA17E04 /* ListeningView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F081DDEA2A607E22233A45F /* ListeningView.swift */; };
+		F67551235EE66F0238231F81 /* ResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63284591E0AF91756A78E6B4 /* ResultView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		085758CED45C43FDD7E6955C /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		41378D2523E9E6F78162A387 /* FlowiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FlowiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4BCFD1CA3DA77BAA14C46F11 /* ReadyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadyView.swift; sourceTree = "<group>"; };
+		5F081DDEA2A607E22233A45F /* ListeningView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListeningView.swift; sourceTree = "<group>"; };
+		63284591E0AF91756A78E6B4 /* ResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultView.swift; sourceTree = "<group>"; };
+		63EBB2707EFF11B4A48C901E /* FlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowApp.swift; sourceTree = "<group>"; };
+		7D1051581E29C9DE2D57CC09 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		95C8E6423B517D7EC84FFB23 /* FlowSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowSession.swift; sourceTree = "<group>"; };
+		97CC50DAE1422B8C503D5BB3 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
+		C812A7BF507EB97A8A6078D8 /* FlowStrings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowStrings.swift; sourceTree = "<group>"; };
+		CE625F1D0C4E61C76411B02C /* SharedViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedViews.swift; sourceTree = "<group>"; };
+		D34646741C54EAAC614FBFD5 /* TranslatingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslatingView.swift; sourceTree = "<group>"; };
+		EEBF105F9CF446F5BFB3D31B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		A28C0D6E9718FF8CACDA30D6 /* FlowiOS */ = {
+			isa = PBXGroup;
+			children = (
+				7D1051581E29C9DE2D57CC09 /* Assets.xcassets */,
+				63EBB2707EFF11B4A48C901E /* FlowApp.swift */,
+				95C8E6423B517D7EC84FFB23 /* FlowSession.swift */,
+				C812A7BF507EB97A8A6078D8 /* FlowStrings.swift */,
+				97CC50DAE1422B8C503D5BB3 /* HistoryView.swift */,
+				EEBF105F9CF446F5BFB3D31B /* Info.plist */,
+				5F081DDEA2A607E22233A45F /* ListeningView.swift */,
+				4BCFD1CA3DA77BAA14C46F11 /* ReadyView.swift */,
+				63284591E0AF91756A78E6B4 /* ResultView.swift */,
+				085758CED45C43FDD7E6955C /* RootView.swift */,
+				CE625F1D0C4E61C76411B02C /* SharedViews.swift */,
+				D34646741C54EAAC614FBFD5 /* TranslatingView.swift */,
+			);
+			path = FlowiOS;
+			sourceTree = "<group>";
+		};
+		BBBD72F2BACFA73358F48897 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				41378D2523E9E6F78162A387 /* FlowiOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		DF13E5FD859C47A2BF24B638 = {
+			isa = PBXGroup;
+			children = (
+				A28C0D6E9718FF8CACDA30D6 /* FlowiOS */,
+				BBBD72F2BACFA73358F48897 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		04266B6180247ACBB3FDE882 /* FlowiOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8331CC23CDEDB1DAA0F00D3B /* Build configuration list for PBXNativeTarget "FlowiOS" */;
+			buildPhases = (
+				9FA814AC3F5469F8C842551B /* Sources */,
+				7B4E2B1F8AFED7B2509819F3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = FlowiOS;
+			packageProductDependencies = (
+			);
+			productName = FlowiOS;
+			productReference = 41378D2523E9E6F78162A387 /* FlowiOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		0F8164B759D58117C65A36AD /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					04266B6180247ACBB3FDE882 = {
+						DevelopmentTeam = "";
+					};
+				};
+			};
+			buildConfigurationList = 8565B9CE14032154788B66FC /* Build configuration list for PBXProject "FlowiOS" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = DF13E5FD859C47A2BF24B638;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = BBBD72F2BACFA73358F48897 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				04266B6180247ACBB3FDE882 /* FlowiOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		7B4E2B1F8AFED7B2509819F3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7FA105BED382014EF65C3AD8 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		9FA814AC3F5469F8C842551B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C4BA2A4188527BD53F05E383 /* FlowApp.swift in Sources */,
+				7233A2B63C7B05FDA7573B08 /* FlowSession.swift in Sources */,
+				55763A05FE5818FA0ECB8778 /* FlowStrings.swift in Sources */,
+				7DA124FA9A87FE2950030F7E /* HistoryView.swift in Sources */,
+				E0599BEF0FBC0C8A5AA17E04 /* ListeningView.swift in Sources */,
+				5082D5CE1BCF49A88A036DE2 /* ReadyView.swift in Sources */,
+				F67551235EE66F0238231F81 /* ResultView.swift in Sources */,
+				AA455758A6A6BA6AD34ADDA9 /* RootView.swift in Sources */,
+				09DE012B9A2A6F443888AD4E /* SharedViews.swift in Sources */,
+				0CAA8E9E65E16C2FBAADDA7A /* TranslatingView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		46DF41EA94881287755B72D7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = FlowiOS/Info.plist;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Flow needs microphone access to interpret speech.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "";
+				INFOPLIST_KEY_UILaunchScreen_Generate = YES;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.flow.FlowiOS;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7FBA0229E6AD888F626E2751 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		B9901DC08E851A0B973D706E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		FB1B1B9B05484404E52F56CC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = FlowiOS/Info.plist;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Flow needs microphone access to interpret speech.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "";
+				INFOPLIST_KEY_UILaunchScreen_Generate = YES;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.flow.FlowiOS;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		8331CC23CDEDB1DAA0F00D3B /* Build configuration list for PBXNativeTarget "FlowiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				46DF41EA94881287755B72D7 /* Debug */,
+				FB1B1B9B05484404E52F56CC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8565B9CE14032154788B66FC /* Build configuration list for PBXProject "FlowiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7FBA0229E6AD888F626E2751 /* Debug */,
+				B9901DC08E851A0B973D706E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 0F8164B759D58117C65A36AD /* Project object */;
+}

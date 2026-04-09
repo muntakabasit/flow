@@ -1,0 +1,265 @@
+You are editing a single file: flow/static/index.html for my Flow web client.
+Flow is a local-first voice interpreter for migrants and diaspora.
+
+Goal: Implement a v1 HOLD-only UI and interaction model with a calm, premium single-screen experience.
+We are NOT exploring features. We are locking a stable v1.
+
+────────────────────────────────
+HARD CONSTRAINTS
+────────────────────────────────
+- Do NOT change:
+  - WebSocket protocol (message types, payload shapes, URLs)
+  - Reconnection timing or algorithm
+  - Any server code (Python)
+- Minimize blast radius:
+  - Reuse existing layout structure and containers where possible
+  - Do not rename existing element IDs or classes unless necessary
+  - Keep existing accessibility hooks and keyboard behavior if present
+- All changes must be contained in index.html (HTML, CSS, inline JS)
+- Use lightweight CSS animations (opacity/transform only). No JS animation loops. No heavy box-shadow animations.
+
+────────────────────────────────
+1. INTERACTION MODEL (SOURCE OF TRUTH)
+────────────────────────────────
+
+Flow v1 is PUSH-TO-TALK ONLY:
+
+• User presses and holds the orb → app enters Listening.
+• User releases → app:
+  - stops listening,
+  - transcribes,
+  - translates,
+  - then speaks.
+• While the app is in Speaking, a new press & hold = INTERRUPT:
+  - Stop TTS playback immediately on the client.
+  - If the protocol expects a playback-done message, send it.
+  - Transition to Listening and start a new turn.
+
+There is NO AUTO / always-on mode in the v1 UI.
+There must be NO VAD sliders or “reliability” knobs in the visible UI.
+
+Minimum recording duration:
+• If the user holds for less than 500ms:
+  - Discard the turn (no server call).
+  - Return to Idle.
+  - Show a brief hint near the orb: “Hold a bit longer to speak.”
+
+────────────────────────────────
+2. USER-VISIBLE STATES & LABELS
+────────────────────────────────
+
+Map the internal state machine onto THESE FIVE user-visible states:
+
+• Idle        → label under orb: “Hold to speak”
+• Listening   → label: “Listening…”
+• Translating → label: “Translating…”
+• Speaking    → label: “Speaking…”
+• Error       → label: “Couldn’t catch that clearly. Hold to try again.”
+
+Rules:
+- During Translating:
+  - Ignore new presses for logic (no state change),
+  - BUT if the user taps/presses the orb, briefly show a small tooltip like:
+    “Translating… almost done”
+    and give a gentle pulse so they know the press was detected.
+- During Speaking:
+  - A new press & hold MUST interrupt:
+    - Stop TTS playback immediately
+    - Clear any local playback state/queue
+    - Transition to Listening and start recording
+
+Connection state (top trust bar):
+- Show a small bar at the very top that maps WebSocket state to copy:
+  - Connected:  “🟢 Live · English ↔ Português (Brasil)”
+  - Connecting: “🟡 Connecting…”
+  - Offline:    “🔴 Offline · Reconnecting…”
+- Do NOT change reconnection logic or timers — only the displayed text and visuals.
+
+────────────────────────────────
+3. LAYOUT (SINGLE SCREEN)
+────────────────────────────────
+
+Keep a SINGLE main view with three vertical zones:
+
+(A) Top bar
+- Left: FLOW wordmark
+- Subtitle: “Diaspora Interpreter”
+- Center: language pair pill, e.g. “English ↔ Português (Brasil)”
+- Right: gear icon for Settings (text label can be “Settings” or tooltip title).
+
+(B) Middle area: “my side / their side”
+
+Use two simple lanes rather than chat bubbles:
+
+- One lane for **You** (source language):
+  - Label: “You · English” (or current source)
+- One lane for **Partner** (target language):
+  - Label: “Partner · Português (Brasil)” etc.
+
+Each turn should show something like:
+
+- Direction line: “You → Partner” or “Partner → You”
+- Original text (smaller, lower contrast)
+- Translated text (slightly larger, higher contrast)
+
+Only keep the last ~3 turns visible to avoid clutter.
+(You can reuse existing message containers, just adjust styling.)
+
+(C) Bottom dock
+
+- Center: Big round orb (single control).
+- Under orb: state label (one of the 5 above).
+- Under label: rotating reassurance hints (cycle every ~8 seconds, not faster):
+
+  - “Don’t worry about grammar – just speak.”
+  - “Your accent is welcome here.”
+  - “Flow translates how you actually speak.”
+  - “Code-switching is fine – speak naturally.”
+
+No dev diagnostics, raw latency numbers, or VAD sliders in the main view.
+
+────────────────────────────────
+4. ORB BEHAVIOR & ANIMATIONS
+────────────────────────────────
+
+Use CSS classes and transitions only. Focus on clarity, not flashiness.
+
+Idle:
+- Orb: soft static glow.
+- Label: “Hold to speak”.
+
+Listening (button held):
+- On mousedown/touchstart, give INSTANT feedback:
+  - Scale orb slightly up (e.g. 1.05x).
+  - Change orb color (e.g. to a clear “recording” color).
+- Orb shows a simple pulsing ring. If you can hook a mic level, use it; otherwise, use a time-based pulse.
+- Label: “Listening…”.
+- While in Listening, show PARTIAL ASR text live on the “You” side (their language) if streaming transcripts are available.
+
+Translating:
+- On mouseup/touchend from Listening:
+  - Scale orb back to normal size.
+  - Change orb color to an in-between “processing” color (e.g. orange).
+- Orb: gentle breathing animation (slow scale/opacity).
+- Label: “Translating…”.
+- If translation takes more than ~1500ms:
+  - Show a small line under the label:
+    “Choosing the clearest words…”
+
+Speaking:
+- Orb: outward “broadcast waves” animation.
+- Label: “Speaking…”.
+
+Error:
+- Orb: subtle amber glow.
+- Label: “Couldn’t catch that clearly. Hold to try again.”
+- Do NOT show error codes or stack traces.
+- Clear any failed transcript for that turn (no “ghost” partials left on screen).
+
+Animations must be subtle and calm — suitable for clinic, immigration office, workplace.
+
+────────────────────────────────
+5. PRESS & HOLD EVENT HANDLING (CRITICAL)
+────────────────────────────────
+
+Implement a single orb control with unified mouse/touch behavior.
+
+Start recording on:
+- mousedown
+- touchstart
+(using the same start handler)
+
+Stop recording on:
+- mouseup
+- mouseleave
+- touchend
+- touchcancel
+(using the same stop handler)
+
+Start handler logic:
+- If current state is Idle, Speaking, or Error:
+  - If Speaking: stop TTS playback immediately and clear playback state.
+  - Enter Listening state.
+  - Apply the “Listening” orb visual (scale + color).
+  - Start mic capture (as it works today).
+  - Start a timer to measure duration.
+
+Stop handler logic:
+- Only act if we are currently in Listening.
+- Compute duration since start.
+  - If < 500ms:
+    - Stop mic.
+    - Go back to Idle.
+    - Show transient hint: “Hold a bit longer to speak.”
+  - Else:
+    - Stop mic.
+    - Transition to Translating.
+    - Send audio to server exactly as the existing implementation does.
+
+During Translating:
+- Do NOT change state on orb press; only show the small “Translating… almost done” tooltip + gentle pulse when the user presses.
+
+────────────────────────────────
+6. TRANSCRIPT BEHAVIOR
+────────────────────────────────
+
+- While Listening:
+  - Show partial ASR text on the **You** lane as the user speaks (their language).
+- On final transcription:
+  - Replace partial text with final text.
+- When translation is ready:
+  - Add a new turn to the **Partner** lane with the translated text.
+
+Keep only the last ~3 turns visible.
+(You can simply remove older DOM elements or dim them.)
+
+On error:
+- Use the Error state label.
+- Do not show raw error codes to the user.
+
+────────────────────────────────
+7. SETTINGS (MINIMAL)
+────────────────────────────────
+
+Settings sheet (opened via the gear icon):
+
+- Language pair selector:
+  - From: English, Português (Brasil), Español, Français
+  - To:   English, Português (Brasil), Español, Français
+  - DEFAULT pair: English ↔ Português (Brasil)
+
+- Output mode toggle:
+  - “Live conversation” (voice + text) — DEFAULT
+  - “Text only” (no TTS; show translations only)
+
+No VAD sliders, no reliability toggles, no debug options.
+If such controls already exist in the UI, hide them or remove their visible elements, but do not break internal logic that server code relies on.
+
+────────────────────────────────
+8. IMPLEMENTATION NOTES & OUTPUT
+────────────────────────────────
+
+- Comment major new blocks clearly, e.g.:
+// HOLD-ONLY ORB HANDLERS
+// FLOW STATE LABEL MAPPING
+// TRANSCRIPT LANES (YOU / PARTNER)
+
+- Preserve existing console logging where possible.
+
+At the end, provide:
+
+1) A short summary describing:
+   - Which orb/mic handlers you changed.
+   - How internal states map to the 5 visible labels.
+   - Where you implemented:
+     - the 500ms minimum duration check, and
+     - the Speaking interrupt behavior.
+
+2) The full updated index.html content.
+
+Focus on making Flow v1 simple, predictable, and trustworthy for migrants and diaspora:
+- One big control (the orb)
+- Clear states
+- Reassuring copy
+- No hidden tricks
+- No feature creep

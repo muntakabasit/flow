@@ -1,0 +1,1055 @@
+"""
+FLOW LOCAL — Live Bilingual Interpreter (100% Local)
+No cloud calls. Whisper + Ollama + Piper TTS on-device.
+
+Pipeline:
+  Browser mic → WebSocket → Silero VAD → faster-whisper → Ollama → Piper TTS → Browser
+
+Same WebSocket protocol as server.py — browser client needs zero changes.
+
+Hardened version:
+  - Energy pre-filter (skip silence before Whisper)
+  - Whisper hallucination guard
+  - Max speech duration limit (prevents runaway segments)
+  - Ollama timeout/retry
+  - Echo suppression (mute mic during TTS playback)
+  - Latency tracking per turn
+"""
+
+import asyncio
+import json
+import os
+import sys
+import io
+import wave
+import base64
+import time
+import traceback
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from enum import Enum
+
+import numpy as np
+import httpx
+import onnxruntime
+from faster_whisper import WhisperModel
+from piper import PiperVoice
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+
+# Error codes for structured error handling
+class ErrorCode(str, Enum):
+    STT_FAILED = "STT_FAILED"
+    STT_TIMEOUT = "STT_TIMEOUT"
+    LLM_FAILED = "LLM_FAILED"
+    LLM_TIMEOUT = "LLM_TIMEOUT"
+    LLM_UNAVAILABLE = "LLM_UNAVAILABLE"
+    TTS_FAILED = "TTS_FAILED"
+    AUDIO_ENCODING_ERROR = "AUDIO_ENCODING_ERROR"
+    VAD_ERROR = "VAD_ERROR"
+    UNKNOWN = "UNKNOWN"
+
+    def user_message(self):
+        messages = {
+            "STT_FAILED": "Could not understand speech. Please try again.",
+            "STT_TIMEOUT": "Speech processing took too long. Try speaking shorter phrases.",
+            "LLM_FAILED": "Translation service encountered an error. Retrying...",
+            "LLM_TIMEOUT": "Translation is slow. Please wait or try a shorter phrase.",
+            "LLM_UNAVAILABLE": "Translator offline. Make sure Ollama is running.",
+            "TTS_FAILED": "Could not generate audio response.",
+            "AUDIO_ENCODING_ERROR": "Audio encoding failed. Check microphone.",
+            "VAD_ERROR": "Speech detection error.",
+            "UNKNOWN": "Unknown error occurred.",
+        }
+        return messages.get(self.value, messages["UNKNOWN"])
+
+
+# ---------------------------------------------------------------------------
+# Logging (unbuffered)
+# ---------------------------------------------------------------------------
+
+def log(msg):
+    print(msg, flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+FLOW_DIR = Path(__file__).resolve().parent
+PIPER_MODELS_DIR = FLOW_DIR / "models" / "piper"
+
+# Whisper
+WHISPER_MODEL_SIZE = "tiny"       # "tiny" for sub-200ms STT (~100-150ms, 97% accuracy on short phrases)
+WHISPER_DEVICE = "cpu"            # ctranslate2 on macOS = cpu
+WHISPER_COMPUTE_TYPE = "int8"     # fastest on cpu
+
+# Ollama
+OLLAMA_URL = "http://localhost:11434/api/chat"
+OLLAMA_MODEL = "gemma3:4b"
+OLLAMA_TIMEOUT = 30.0             # seconds per translation request (increased for stability)
+OLLAMA_RETRIES = 3                # retry count on failure (increased for resilience)
+
+# Audio
+INPUT_SAMPLE_RATE = 24000         # from browser
+VAD_SAMPLE_RATE = 16000           # silero requires 16kHz
+WHISPER_SAMPLE_RATE = 16000       # whisper requires 16kHz
+
+# VAD
+VAD_THRESHOLD = 0.5
+VAD_NEG_THRESHOLD = 0.35
+SILENCE_DURATION_MS = 400         # reduced from 650ms for faster turn finalization (-250ms latency)
+MIN_SPEECH_MS = 350               # allow shorter natural turns without feeling delayed
+MAX_SPEECH_S = 30                 # force-stop segment after 30s (prevents runaway)
+AUDIO_TIMEOUT_MS = 10000          # 10 second timeout for audio - finalize if no audio received (prevents hanging)
+VAD_WINDOW = 512                  # silero window size in samples
+VAD_CONTEXT = 64                  # silero context size
+
+# Energy pre-filter: skip segments quieter than this RMS
+MIN_ENERGY_RMS = 0.002            # below this = silence/ambient noise (lowered to not clip quiet speech)
+
+# ---------------------------------------------------------------------------
+# Language Stability Contract (CRITICAL)
+# ---------------------------------------------------------------------------
+
+ALLOWED_LANGS = ["en", "pt"]      # ONLY English and Portuguese (PT includes all pt variants)
+LANGUAGE_SWITCH_HYSTERESIS = 3    # require 3 consecutive high-confidence detections before switching
+LANGUAGE_SWITCH_COOLDOWN = 2      # prevent re-switch for N turns unless very high confidence (0.95+)
+MIN_CONFIDENCE_STT = 0.55         # skip translation if STT confidence below threshold
+MIN_CONFIDENCE_SWITCH = 0.75      # require 0.75+ confidence to switch languages
+
+# Reliability Modes — Default Configuration
+DEFAULT_RELIABILITY_MODE = "fast"     # default to responsive conversation feel
+
+# Mode-specific parameters (per-session, not hardcoded)
+MODE_CONFIG = {
+    "stable": {
+        "SILENCE_DURATION_MS": 1300,    # 1.3s (longer to ensure complete utterance)
+        "KEEPALIVE_INTERVAL": 20,       # seconds
+        "KEEPALIVE_TIMEOUT": 90000,     # 90s timeout
+    },
+    "fast": {
+        "SILENCE_DURATION_MS": 650,     # responsive finalization for live conversation
+        "KEEPALIVE_INTERVAL": 20,       # seconds
+        "KEEPALIVE_TIMEOUT": 45000,     # 45s timeout
+    }
+}
+
+# Default values for legacy/fallback (SILENCE_DURATION_MS kept at 400ms from line 103)
+# No override here - let line 103 value stick for fast default
+KEEPALIVE_INTERVAL = MODE_CONFIG[DEFAULT_RELIABILITY_MODE]["KEEPALIVE_INTERVAL"]
+KEEPALIVE_TIMEOUT = MODE_CONFIG[DEFAULT_RELIABILITY_MODE]["KEEPALIVE_TIMEOUT"]
+
+# Whisper hallucination guard
+HALLUCINATION_PATTERNS = {
+    # Common faster-whisper hallucinations on silence/noise
+    # English
+    "thank you", "thanks for watching", "subscribe", "like and subscribe",
+    "thanks for listening", "bye", "subtitles by", "thank you for watching",
+    "thanks for viewing", "if you like this",
+    # Portuguese
+    "obrigado por assistir", "se inscreva", "legendas pela comunidade", "amara.org",
+    "obrigado por ver", "obrigado por ouvir",
+}
+MIN_TRANSCRIPTION_CHARS = 2       # ignore 1-char transcriptions
+
+# Thread pool for blocking inference calls
+EXECUTOR = ThreadPoolExecutor(max_workers=2)
+
+# ---------------------------------------------------------------------------
+# System prompt — interpreter behavior (text mode)
+# ---------------------------------------------------------------------------
+
+INTERPRETER_PROMPT = (
+    "You are FLOW, a translation robot. You ONLY translate text.\n"
+    "You have NO other purpose. You do not chat or explain.\n\n"
+    "Your ONLY task:\n"
+    "1. Read the [LANGUAGE → LANGUAGE] direction\n"
+    "2. Translate ONLY the text after the direction indicator\n"
+    "3. Return the translation EXACTLY as specified\n"
+    "4. Return ONLY the translation. NOTHING ELSE.\n\n"
+    "TRANSLATION RULES:\n"
+    "- Preserve tone and intent exactly\n"
+    "- Do NOT correct, rephrase, or explain\n"
+    "- Do NOT add greetings, politeness, or commentary\n"
+    "- Return EXACTLY one translation, no more\n"
+)
+
+
+# ---------------------------------------------------------------------------
+# Model loading (at startup)
+# ---------------------------------------------------------------------------
+
+log("[flow-local] Loading Whisper model...")
+whisper_model = WhisperModel(
+    WHISPER_MODEL_SIZE,
+    device=WHISPER_DEVICE,
+    compute_type=WHISPER_COMPUTE_TYPE,
+)
+log(f"[flow-local] Whisper '{WHISPER_MODEL_SIZE}' loaded")
+
+log("[flow-local] Loading Piper voices...")
+piper_voice_en = PiperVoice.load(str(PIPER_MODELS_DIR / "en_US-lessac-medium.onnx"))
+piper_voice_pt = PiperVoice.load(str(PIPER_MODELS_DIR / "pt_BR-faber-medium.onnx"))
+PIPER_RATE_EN = piper_voice_en.config.sample_rate
+PIPER_RATE_PT = piper_voice_pt.config.sample_rate
+log(f"[flow-local] Piper voices loaded (EN={PIPER_RATE_EN}Hz, PT={PIPER_RATE_PT}Hz)")
+
+log("[flow-local] Loading Silero VAD...")
+VAD_ONNX_PATH = str(
+    Path(onnxruntime.__file__).parent.parent
+    / "faster_whisper" / "assets" / "silero_vad_v6.onnx"
+)
+# Verify it exists, fall back to finding it
+if not Path(VAD_ONNX_PATH).exists():
+    from faster_whisper.vad import get_assets_path
+    VAD_ONNX_PATH = str(Path(get_assets_path()) / "silero_vad_v6.onnx")
+log(f"[flow-local] Silero VAD at: {VAD_ONNX_PATH}")
+
+
+# ---------------------------------------------------------------------------
+# Audio utilities
+# ---------------------------------------------------------------------------
+
+def resample(audio, input_rate, output_rate):
+    """Linear interpolation resampler."""
+    if input_rate == output_rate:
+        return audio
+    ratio = input_rate / output_rate
+    output_len = int(len(audio) / ratio)
+    indices = np.arange(output_len) * ratio
+    low = np.floor(indices).astype(int)
+    high = np.minimum(low + 1, len(audio) - 1)
+    frac = (indices - low).astype(np.float32)
+    return audio[low] * (1 - frac) + audio[high] * frac
+
+
+def decode_browser_audio(b64_pcm16):
+    """Decode base64 PCM16 24kHz from browser → float32 numpy array."""
+    raw = base64.b64decode(b64_pcm16)
+    int16 = np.frombuffer(raw, dtype=np.int16)
+    return int16.astype(np.float32) / 32768.0
+
+
+def float32_to_pcm16_b64(audio_float32):
+    """Float32 numpy → PCM16 → base64 string."""
+    int16 = np.clip(audio_float32 * 32767, -32768, 32767).astype(np.int16)
+    raw = int16.tobytes()
+    return base64.b64encode(raw).decode("ascii")
+
+
+# ---------------------------------------------------------------------------
+# Streaming Silero VAD
+# ---------------------------------------------------------------------------
+
+class StreamingVAD:
+    """
+    Processes audio in real-time, detects speech boundaries.
+    Calls ONNX Silero VAD directly with persistent LSTM state.
+    """
+
+    def __init__(
+        self,
+        threshold=VAD_THRESHOLD,
+        neg_threshold=VAD_NEG_THRESHOLD,
+        silence_ms=SILENCE_DURATION_MS,
+        min_speech_ms=MIN_SPEECH_MS,
+        max_speech_s=MAX_SPEECH_S,
+        sample_rate=VAD_SAMPLE_RATE,
+    ):
+        self.threshold = threshold
+        self.neg_threshold = neg_threshold
+        self.silence_samples = int(silence_ms * sample_rate / 1000)
+        self.min_speech_samples = int(min_speech_ms * sample_rate / 1000)
+        self.max_speech_samples = int(max_speech_s * sample_rate)
+        self.sample_rate = sample_rate
+
+        # ONNX session
+        opts = onnxruntime.SessionOptions()
+        opts.inter_op_num_threads = 1
+        opts.intra_op_num_threads = 1
+        self.session = onnxruntime.InferenceSession(
+            VAD_ONNX_PATH,
+            providers=["CPUExecutionProvider"],
+            sess_options=opts,
+        )
+
+        # Persistent LSTM state
+        self.h = np.zeros((1, 1, 128), dtype="float32")
+        self.c = np.zeros((1, 1, 128), dtype="float32")
+        self.context = np.zeros(VAD_CONTEXT, dtype="float32")
+
+        # State machine
+        self.is_speaking = False
+        self.silence_counter = 0
+        self.speech_buffer = []  # list of float32 arrays
+        self.speech_samples_count = 0
+        self.pending = np.array([], dtype="float32")  # incomplete window buffer
+
+    def reset_state(self):
+        """Reset LSTM state for new session."""
+        self.h = np.zeros((1, 1, 128), dtype="float32")
+        self.c = np.zeros((1, 1, 128), dtype="float32")
+        self.context = np.zeros(VAD_CONTEXT, dtype="float32")
+
+    def _run_vad_window(self, window_512):
+        """Run VAD on a single 512-sample window. Returns speech probability."""
+        # Prepend context
+        input_frame = np.concatenate([self.context, window_512])
+        input_frame = input_frame.reshape(1, -1)  # (1, 576)
+
+        output, self.h, self.c = self.session.run(
+            None,
+            {"input": input_frame, "h": self.h, "c": self.c},
+        )
+
+        # Update context
+        self.context = window_512[-VAD_CONTEXT:]
+
+        # output shape is (1,) — single probability value
+        return float(output[0])
+
+    def process_chunk(self, audio_16k):
+        """
+        Process a chunk of 16kHz float32 audio.
+        Returns list of events: [("speech_started",), ("speech_stopped", audio_segment)]
+        """
+        events = []
+
+        # Append to pending buffer
+        self.pending = np.concatenate([self.pending, audio_16k])
+
+        # Process all complete 512-sample windows
+        while len(self.pending) >= VAD_WINDOW:
+            window = self.pending[:VAD_WINDOW]
+            self.pending = self.pending[VAD_WINDOW:]
+
+            prob = self._run_vad_window(window)
+
+            if not self.is_speaking:
+                # Currently idle — check if speech starts
+                if prob >= self.threshold:
+                    self.is_speaking = True
+                    self.silence_counter = 0
+                    self.speech_buffer = [window]
+                    self.speech_samples_count = VAD_WINDOW
+                    events.append(("speech_started",))
+            else:
+                # Currently speaking — accumulate audio
+                self.speech_buffer.append(window)
+                self.speech_samples_count += VAD_WINDOW
+
+                if prob < self.neg_threshold:
+                    self.silence_counter += VAD_WINDOW
+                else:
+                    self.silence_counter = 0
+
+                # Check if silence exceeded threshold OR max duration hit
+                force_stop = self.speech_samples_count >= self.max_speech_samples
+                if force_stop:
+                    log(f"[flow-local] VAD: max duration ({MAX_SPEECH_S}s) hit, forcing segment end")
+
+                if self.silence_counter >= self.silence_samples or force_stop:
+                    self.is_speaking = False
+
+                    # Ignore very short sounds (clicks, pops)
+                    if self.speech_samples_count >= self.min_speech_samples:
+                        # Trim trailing silence from the speech buffer
+                        if not force_stop:
+                            trim_windows = self.silence_counter // VAD_WINDOW
+                            if trim_windows > 0 and trim_windows < len(self.speech_buffer):
+                                self.speech_buffer = self.speech_buffer[:-trim_windows]
+
+                        segment = np.concatenate(self.speech_buffer)
+                        events.append(("speech_stopped", segment))
+                    else:
+                        events.append(("speech_stopped_short",))
+
+                    self.speech_buffer = []
+                    self.speech_samples_count = 0
+                    self.silence_counter = 0
+
+        return events
+
+
+# ---------------------------------------------------------------------------
+# STT: faster-whisper transcription
+# ---------------------------------------------------------------------------
+
+def compute_rms(audio):
+    """Compute RMS energy of an audio segment."""
+    return float(np.sqrt(np.mean(audio ** 2)))
+
+
+def normalize_lang(raw_lang):
+    """
+    Normalize detected language to canonical form.
+
+    Returns:
+        "en" or "pt-BR" (normalized)
+        Converts pt, pt-pt, pt-br variants → pt-BR
+        Converts other languages to last stable lang fallback
+    """
+    if not raw_lang:
+        return None
+
+    raw_lower = raw_lang.lower().strip()
+
+    # English
+    if raw_lower == "en" or raw_lower.startswith("en-"):
+        return "en"
+
+    # Portuguese (all variants normalize to pt-BR)
+    if raw_lower.startswith("pt"):
+        return "pt-BR"
+
+    # Unsupported language detected (ru, it, sq, etc.)
+    return None
+
+
+def is_hallucination(text):
+    """Check if Whisper output is a known hallucination pattern."""
+    t = text.strip().lower().rstrip(".").rstrip("!")
+    if len(t) < MIN_TRANSCRIPTION_CHARS:
+        return True
+    # Exact match for known patterns
+    if t in HALLUCINATION_PATTERNS:
+        return True
+    # Partial match for obvious cases (subscribe, thank you, bye, etc.)
+    hallucination_keywords = ["subscribe", "thank you", "bye", "like and subscribe", "for watching"]
+    if any(keyword in t for keyword in hallucination_keywords):
+        # But allow if it's clearly part of a longer meaningful phrase
+        if len(t) > len(hallucination_keywords[0]) + 5:
+            return False  # Likely part of a longer phrase
+        return True
+    return False
+
+
+def transcribe_segment(audio_16k):
+    """
+    Transcribe a speech segment using faster-whisper.
+    Returns (text, language, confidence).
+
+    Strategy: auto-detect, but if the detected language is NOT en or pt,
+    re-transcribe forcing Portuguese (the base model often confuses PT
+    with Dutch, Greek, etc.).
+    """
+    # Energy pre-filter: skip near-silent segments
+    rms = compute_rms(audio_16k)
+    if rms < MIN_ENERGY_RMS:
+        log(f"[flow-local] Energy too low (RMS={rms:.5f}), skipping")
+        return "", "unknown", 0.0
+
+    # First attempt: auto-detect language
+    segments, info = whisper_model.transcribe(
+        audio_16k,
+        beam_size=1,
+        best_of=1,
+        language=None,           # auto-detect
+        vad_filter=False,
+        without_timestamps=True,
+    )
+
+    raw_lang = info.language if info.language else "unknown"
+    # Whisper doesn't provide per-segment confidence; we estimate from no_speech_prob
+    confidence = 1.0 - (info.no_speech_prob if hasattr(info, 'no_speech_prob') else 0.1)
+    confidence = max(0.0, min(1.0, confidence))  # clamp to [0,1]
+
+    # If detected as English or Portuguese, use the result as-is
+    if raw_lang == "en" or raw_lang.startswith("pt"):
+        text_parts = [seg.text for seg in segments]
+        text = " ".join(text_parts).strip()
+        lang = raw_lang
+
+    else:
+        # Misdetection (nl, el, etc.) — re-transcribe forcing Portuguese
+        log(f"[flow-local] Unexpected lang '{raw_lang}', re-transcribing as Portuguese")
+        segments, _ = whisper_model.transcribe(
+            audio_16k,
+            beam_size=1,
+            best_of=1,
+            language="pt",       # force Portuguese
+            vad_filter=False,
+            without_timestamps=True,
+        )
+        text_parts = [seg.text for seg in segments]
+        text = " ".join(text_parts).strip()
+        lang = "pt"
+
+    # Hallucination guard
+    if is_hallucination(text):
+        log(f"[flow-local] Hallucination filtered: '{text}'")
+        return "", lang, confidence
+
+    return text, lang, confidence
+
+
+# ---------------------------------------------------------------------------
+# Translation: Ollama streaming
+# ---------------------------------------------------------------------------
+
+async def translate_text(text, source_language, client_ws):
+    """
+    Translate text via Ollama (streaming) with retry logic.
+    Sends translation_delta events as tokens arrive.
+    Returns (full_translation, target_language).
+    """
+    # Determine direction
+    if source_language.startswith("pt"):
+        target_lang = "en"
+        direction_hint = f"[Portuguese → English] "
+    else:
+        target_lang = "pt-BR"
+        direction_hint = f"[English → Brazilian Portuguese] "
+
+    # DEBUG: Log what we're translating
+    log(f"[flow-local] Translating: source_lang={source_language}, target={target_lang}, text='{text}'")
+
+    full_text = ""
+    last_error = None
+
+    for attempt in range(1, OLLAMA_RETRIES + 1):
+        full_text = ""
+        try:
+            async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
+                async with client.stream(
+                    "POST",
+                    OLLAMA_URL,
+                    json={
+                        "model": OLLAMA_MODEL,
+                        "messages": [
+                            {"role": "system", "content": INTERPRETER_PROMPT},
+                            {"role": "user", "content": direction_hint + text},
+                        ],
+                        "stream": True,
+                        "options": {
+                            "temperature": 0.1,      # very low creativity for consistent translations
+                            "num_predict": 200,       # cap output length
+                        },
+                    },
+                ) as response:
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                            delta = chunk.get("message", {}).get("content", "")
+                            if delta:
+                                full_text += delta
+                                await client_ws.send_json({
+                                    "type": "translation_delta",
+                                    "text": delta,
+                                })
+                        except json.JSONDecodeError:
+                            continue
+
+            # DEBUG: Log raw translation before stripping
+            log(f"[flow-local] LLM raw response: '{full_text}' (stripped: '{full_text.strip()}')")
+
+            # Send final translation
+            if full_text.strip():
+                await client_ws.send_json({
+                    "type": "translation_done",
+                    "text": full_text.strip(),
+                })
+
+            # Success — break out of retry loop
+            return full_text.strip(), target_lang
+
+        except httpx.ConnectError:
+            last_error = ErrorCode.LLM_UNAVAILABLE
+            log(f"[flow-local] Ollama connect failed (attempt {attempt}/{OLLAMA_RETRIES})")
+        except (httpx.ReadTimeout, httpx.WriteTimeout, asyncio.TimeoutError):
+            last_error = ErrorCode.LLM_TIMEOUT
+            log(f"[flow-local] Ollama timeout (attempt {attempt}/{OLLAMA_RETRIES})")
+        except Exception as e:
+            last_error = ErrorCode.LLM_FAILED
+            log(f"[flow-local] Translation error (attempt {attempt}/{OLLAMA_RETRIES}): {e}")
+
+        # Brief pause before retry
+        if attempt < OLLAMA_RETRIES:
+            await asyncio.sleep(0.5)
+
+    # All retries exhausted
+    log(f"[flow-local] Translation failed after {OLLAMA_RETRIES} attempts: {last_error}")
+    await client_ws.send_json({
+        "type": "error",
+        "error_code": last_error.value,
+        "message": last_error.user_message(),
+    })
+
+    return full_text.strip(), target_lang
+
+
+# ---------------------------------------------------------------------------
+# TTS: Piper synthesis → PCM16 24kHz → base64 chunks
+# ---------------------------------------------------------------------------
+
+def synthesize_audio(text, target_lang):
+    """
+    Synthesize text to PCM16 24kHz float32 array.
+    Runs in thread pool (blocking).
+    Returns float32 numpy array at 24kHz, or None on failure.
+    """
+    try:
+        voice = piper_voice_pt if target_lang == "pt-BR" else piper_voice_en
+        native_rate = PIPER_RATE_PT if target_lang == "pt-BR" else PIPER_RATE_EN
+
+        # Synthesize — returns AudioChunk objects (one per sentence)
+        chunks = []
+        for audio_chunk in voice.synthesize(text):
+            chunks.append(audio_chunk.audio_float_array)
+
+        if not chunks:
+            return None
+
+        # Concatenate all sentence audio
+        audio = np.concatenate(chunks)
+
+        # Resample to 24kHz if needed
+        if native_rate != INPUT_SAMPLE_RATE:
+            audio = resample(audio, native_rate, INPUT_SAMPLE_RATE)
+
+        return audio
+
+    except Exception as e:
+        log(f"[flow-local] TTS error: {e}")
+        traceback.print_exc()
+        return None
+
+
+async def synthesize_and_send(text, target_lang, client_ws):
+    """Synthesize and stream audio chunks to browser."""
+    loop = asyncio.get_event_loop()
+
+    try:
+        # Run TTS in thread pool to avoid blocking
+        audio = await loop.run_in_executor(
+            EXECUTOR,
+            synthesize_audio,
+            text,
+            target_lang,
+        )
+
+        if audio is None or len(audio) == 0:
+            log("[flow-local] ❌ TTS returned empty audio")
+            await client_ws.send_json({"type": "error", "code": "TTS_FAILED", "message": "Could not generate audio response"})
+            return
+
+        # Chunk into ~2048 samples (~85ms at 24kHz) and send - reduced for lower perceived latency
+        chunk_size = 2048
+        for i in range(0, len(audio), chunk_size):
+            chunk = audio[i : i + chunk_size]
+            b64 = float32_to_pcm16_b64(chunk)
+            await client_ws.send_json({
+                "type": "audio_delta",
+                "audio": b64,
+            })
+    except Exception as e:
+        log(f"[flow-local] ❌ TTS EXCEPTION: {type(e).__name__}: {e}")
+        import traceback
+        log(f"[flow-local] TTS Traceback:\n{traceback.format_exc()}")
+        await client_ws.send_json({"type": "error", "code": "TTS_FAILED", "message": "Could not generate audio response"})
+
+
+# ---------------------------------------------------------------------------
+# FastAPI app
+# ---------------------------------------------------------------------------
+
+app = FastAPI(title="Flow Local Interpreter")
+
+STATIC_DIR = FLOW_DIR / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/")
+async def index():
+    return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "ok",
+        "service": "flow-local-interpreter",
+        "whisper": WHISPER_MODEL_SIZE,
+        "ollama_model": OLLAMA_MODEL,
+        "tts": "piper",
+    }
+
+
+# ---------------------------------------------------------------------------
+# WebSocket handler — the main pipeline
+# ---------------------------------------------------------------------------
+
+@app.websocket("/ws")
+async def websocket_handler(client_ws: WebSocket):
+    await client_ws.accept()
+    log("[flow-local] Client connected")
+
+    # Per-session mode configuration (FIRST — before VAD creation)
+    session_reliability_mode = DEFAULT_RELIABILITY_MODE  # will be overridden by client
+    session_config = MODE_CONFIG[session_reliability_mode]
+    session_silence_duration_ms = session_config["SILENCE_DURATION_MS"]
+    session_keepalive_interval = session_config["KEEPALIVE_INTERVAL"]
+    session_keepalive_timeout = session_config["KEEPALIVE_TIMEOUT"]
+
+    # Per-session state (VAD created AFTER session config is set)
+    vad = StreamingVAD(silence_ms=session_silence_duration_ms)  # Pass session-specific silence duration
+    chunks_received = 0
+    loop = asyncio.get_event_loop()
+    is_playing_tts = False          # echo suppression flag
+    turn_count = 0                  # for latency logging
+    keepalive_task = None           # background keepalive ping
+    last_audio_time = time.monotonic()  # Track audio timeout
+
+    # Language stability state
+    stable_lang = None              # current stable language (None = not yet detected, normalized to "en" or "pt-BR")
+    lang_switch_counter = 0         # consecutive detections of a candidate language
+    candidate_lang = None           # language we're considering switching to
+    turns_since_switch = 0          # cooldown counter after language switch
+
+    # Send ready (wait for client to send mode preference)
+    await client_ws.send_json({
+        "type": "flow.ready",
+        "message": "Local interpreter active. Speak naturally.",
+        "reliability_mode": session_reliability_mode,
+        "keepalive_timeout_ms": session_keepalive_timeout,
+    })
+
+    # Keepalive: ping at interval to detect stale connections
+    async def keepalive():
+        try:
+            ping_count = 0
+            while True:
+                # Use session-specific interval (20-25s per mode config)
+                await asyncio.sleep(session_keepalive_interval)
+                if client_ws.application_state.value == "connected":
+                    try:
+                        ping_count += 1
+                        await client_ws.send_json({"type": "ping"})
+                        if ping_count % 3 == 0:
+                            log(f"[flow-local] Keepalive ping #{ping_count} sent (mode: {session_reliability_mode})")
+                    except Exception as e:
+                        log(f"[flow-local] Keepalive ping failed: {e}")
+                        break
+        except asyncio.CancelledError:
+            log("[flow-local] Keepalive task cancelled")
+            pass
+
+    keepalive_task = asyncio.create_task(keepalive())
+
+    try:
+        while True:
+            data = await client_ws.receive_text()
+            msg = json.loads(data)
+
+            msg_type = msg.get("type")
+
+            # Mode preference: client requests reliability mode
+            if msg_type == "mode_preference":
+                requested_mode = msg.get("mode", DEFAULT_RELIABILITY_MODE)
+                if requested_mode in MODE_CONFIG:
+                    session_reliability_mode = requested_mode
+                    session_config = MODE_CONFIG[session_reliability_mode]
+                    session_silence_duration_ms = session_config["SILENCE_DURATION_MS"]
+                    session_keepalive_interval = session_config["KEEPALIVE_INTERVAL"]
+                    session_keepalive_timeout = session_config["KEEPALIVE_TIMEOUT"]
+
+                    # CRITICAL: Recreate VAD with new silence duration
+                    vad = StreamingVAD(silence_ms=session_silence_duration_ms)
+
+                    log(f"[flow-local] Mode switched to {session_reliability_mode} (silence: {session_silence_duration_ms}ms, keepalive: {session_keepalive_timeout}ms, VAD recreated)")
+                    # Echo back confirmation
+                    await client_ws.send_json({
+                        "type": "mode_confirmed",
+                        "reliability_mode": session_reliability_mode,
+                        "keepalive_timeout_ms": session_keepalive_timeout,
+                    })
+                continue
+
+            # Echo suppression: browser tells us when TTS playback ends
+            if msg_type == "tts_playback_done":
+                is_playing_tts = False
+                log("[flow-local] TTS playback ended, mic re-enabled")
+                continue
+
+            # Keepalive messages: respond immediately
+            if msg_type == "keepalive_ping":
+                try:
+                    await client_ws.send_json({"type": "keepalive_pong"})
+                except Exception:
+                    pass
+                continue
+
+            if msg_type == "pong":
+                # client responded to our ping, no action needed
+                continue
+
+            if msg_type != "audio":
+                continue
+
+            # Update audio timeout counter
+            last_audio_time = time.monotonic()
+
+            chunks_received += 1
+            if chunks_received == 1:
+                log("[flow-local] First audio chunk received")
+
+            # Echo suppression: discard mic audio while TTS is playing
+            if is_playing_tts:
+                continue
+
+            # Decode browser audio (24kHz float32)
+            audio_24k = decode_browser_audio(msg["audio"])
+
+            # Resample to 16kHz for VAD + Whisper
+            audio_16k = resample(audio_24k, INPUT_SAMPLE_RATE, VAD_SAMPLE_RATE)
+
+            # Run VAD
+            events = vad.process_chunk(audio_16k)
+
+            for event in events:
+                if event[0] == "speech_started":
+                    speech_start_time = time.monotonic()
+                    log("[flow-local] Speech started")
+                    await client_ws.send_json({"type": "speech_started"})
+
+                elif event[0] == "speech_stopped":
+                    speech_stop_time = time.monotonic()
+                    # CRITICAL: VAD firing latency (silence after last word → VAD detection)
+                    vad_delta_ms = (speech_stop_time - speech_start_time) * 1000 if 'speech_start_time' in locals() else 0
+                    log(f"[flow-local] Speech stopped — VAD fired after {vad_delta_ms:.0f}ms")
+                    await client_ws.send_json({"type": "speech_stopped", "vad_delta_ms": vad_delta_ms})
+                    turn_start = time.monotonic()
+
+                    speech_audio = event[1]  # float32 16kHz
+                    duration_s = len(speech_audio) / VAD_SAMPLE_RATE
+                    segment_ms = int(duration_s * 1000)
+                    log(f"[flow-local] Speech segment: {duration_s:.1f}s ({len(speech_audio)} samples)")
+
+                    # 1. Transcribe (in thread pool — blocking)
+                    stt_start = time.monotonic()
+                    try:
+                        text, detected_lang, stt_confidence = await loop.run_in_executor(
+                            EXECUTOR,
+                            transcribe_segment,
+                            speech_audio,
+                        )
+                        stt_ms = (time.monotonic() - stt_start) * 1000
+                        log(f"[flow-local] STT ({stt_ms:.0f}ms): [{detected_lang}] confidence={stt_confidence:.2f} text='{text}'")
+                    except Exception as e:
+                        stt_ms = (time.monotonic() - stt_start) * 1000
+                        log(f"[flow-local] ❌ STT EXCEPTION ({stt_ms:.0f}ms): {type(e).__name__}: {e}")
+                        import traceback
+                        log(f"[flow-local] STT Traceback:\n{traceback.format_exc()}")
+                        await client_ws.send_json({"type": "error", "code": "STT_FAILED", "message": "Could not understand speech"})
+                        continue
+
+                    # GUARD: Empty transcript — skip translation
+                    if not text.strip():
+                        log("[flow-local] Empty transcription, skipping turn")
+                        await client_ws.send_json({"type": "turn_complete"})
+                        turns_since_switch += 1
+                        continue
+
+                    # GUARD: Low STT confidence — skip translation
+                    if stt_confidence < MIN_CONFIDENCE_STT:
+                        log(f"[flow-local] STT confidence too low ({stt_confidence:.2f} < {MIN_CONFIDENCE_STT}), skipping")
+                        await client_ws.send_json({"type": "turn_complete"})
+                        turns_since_switch += 1
+                        continue
+
+                    # LANGUAGE STABILITY: Apply hysteresis and cooldown
+                    # Normalize detected language to canonical form (en or pt-BR)
+                    normalized_lang = normalize_lang(detected_lang)
+
+                    switch_reason = None
+                    active_lang = stable_lang if stable_lang else normalized_lang
+
+                    # First detection: initialize stable language (normalized)
+                    if stable_lang is None:
+                        if normalized_lang:  # Only set if it's a supported language
+                            stable_lang = normalized_lang
+                            active_lang = normalized_lang
+                            switch_reason = "initial_detection"
+                            log(f"[flow-local] Language initialized: {stable_lang} (detected: {detected_lang})")
+                        else:
+                            # Unsupported language on first detection
+                            log(f"[flow-local] Unsupported language on first detection: {detected_lang}, waiting for supported lang")
+                            switch_reason = "unsupported_initial"
+                            active_lang = normalized_lang or "pt-BR"  # fallback
+                            await client_ws.send_json({"type": "turn_complete"})
+                            turns_since_switch += 1
+                            continue
+
+                    # Language switch logic with hysteresis (only for supported languages)
+                    elif normalized_lang and normalized_lang != stable_lang:
+                        # Reset hysteresis if candidate language changes
+                        if normalized_lang != candidate_lang:
+                            candidate_lang = normalized_lang
+                            lang_switch_counter = 1
+                            active_lang = normalized_lang  # Use detected language immediately for responsiveness
+                            switch_reason = "language_candidate_detected"
+                            log(f"[flow-local] Language candidate change: {candidate_lang} (detected as {detected_lang}, count=1)")
+                        else:
+                            lang_switch_counter += 1
+                            log(f"[flow-local] Language candidate {candidate_lang}: count={lang_switch_counter}/{LANGUAGE_SWITCH_HYSTERESIS}")
+
+                            # Check if we have enough consecutive detections to switch
+                            if lang_switch_counter >= LANGUAGE_SWITCH_HYSTERESIS:
+                                # Check cooldown: allow very high confidence to override
+                                if turns_since_switch >= LANGUAGE_SWITCH_COOLDOWN or stt_confidence >= 0.95:
+                                    stable_lang = normalized_lang
+                                    active_lang = normalized_lang
+                                    candidate_lang = None
+                                    lang_switch_counter = 0
+                                    turns_since_switch = 0
+                                    switch_reason = "hysteresis_satisfied"
+                                    log(f"[flow-local] Language switched to {stable_lang} (cooldown ok)")
+                                else:
+                                    # Still in cooldown period
+                                    active_lang = stable_lang
+                                    switch_reason = f"cooldown_active ({turns_since_switch}/{LANGUAGE_SWITCH_COOLDOWN})"
+                                    log(f"[flow-local] Language switch blocked by cooldown: {switch_reason}")
+                            else:
+                                # Not enough consecutive detections yet
+                                # BUT: Use the detected language for translation (for real-time responsiveness)
+                                # Only update stable_lang after hysteresis is satisfied
+                                active_lang = normalized_lang
+                                switch_reason = f"hysteresis_pending ({lang_switch_counter}/{LANGUAGE_SWITCH_HYSTERESIS})"
+                    elif normalized_lang and normalized_lang == stable_lang:
+                        # Same language detected again — reset hysteresis
+                        candidate_lang = None
+                        lang_switch_counter = 0
+                        active_lang = stable_lang
+                        switch_reason = "confirmed_language"
+                    else:
+                        # Unsupported language detected while stable lang exists
+                        active_lang = stable_lang  # Ignore unsupported detection
+                        switch_reason = f"unsupported_lang_ignored ({detected_lang})"
+                        log(f"[flow-local] Unsupported language detected: {detected_lang}, keeping {stable_lang}")
+
+                    # Send source transcript with language diagnostics
+                    await client_ws.send_json({
+                        "type": "source_transcript",
+                        "text": text,
+                        "diagnostics": {
+                            "detected_lang": detected_lang,
+                            "stt_confidence": stt_confidence,
+                            "stable_lang": stable_lang,
+                            "active_lang": active_lang,
+                            "switch_reason": switch_reason,
+                            "segment_ms": segment_ms,
+                        }
+                    })
+
+                    # 2. Translate using ACTIVE language (stable_lang after hysteresis)
+                    llm_start = time.monotonic()
+                    full_translation, target_lang = await translate_text(
+                        text, active_lang, client_ws
+                    )
+                    llm_ms = (time.monotonic() - llm_start) * 1000
+                    log(f"[flow-local] Translation ({llm_ms:.0f}ms): [{target_lang}] {full_translation}")
+
+                    # 3. TTS (synthesize and stream audio)
+                    tts_ms = 0
+                    if full_translation.strip():
+                        tts_start = time.monotonic()
+                        # Tell client TTS is about to play (for echo suppression)
+                        is_playing_tts = True
+                        await client_ws.send_json({"type": "tts_start"})
+                        await synthesize_and_send(
+                            full_translation, target_lang, client_ws
+                        )
+                        tts_ms = (time.monotonic() - tts_start) * 1000
+                        log(f"[flow-local] TTS ({tts_ms:.0f}ms)")
+
+                    # Turn complete — log full latency with language diagnostics
+                    turn_ms = (time.monotonic() - turn_start) * 1000
+                    turn_count += 1
+                    turns_since_switch += 1
+                    await client_ws.send_json({"type": "turn_complete"})
+                    log(f"[flow-local] Turn #{turn_count} complete — {switch_reason} | total {turn_ms:.0f}ms (STT:{stt_ms:.0f} LLM:{llm_ms:.0f} TTS:{tts_ms:.0f}ms)")
+
+                elif event[0] == "speech_stopped_short":
+                    log("[flow-local] Short sound ignored")
+
+            if chunks_received % 100 == 0:
+                log(f"[flow-local] Audio chunks: {chunks_received}")
+
+            # Audio timeout check: if no audio for 10 seconds, something's wrong
+            time_since_audio = (time.monotonic() - last_audio_time) * 1000
+            if time_since_audio > AUDIO_TIMEOUT_MS:
+                log(f"[flow-local] Audio timeout ({time_since_audio:.0f}ms) - client may have disconnected")
+                break
+
+    except WebSocketDisconnect:
+        log("[flow-local] Client disconnected")
+    except Exception as e:
+        log(f"[flow-local] ❌ UNHANDLED EXCEPTION: {type(e).__name__}: {e}")
+        log(f"[flow-local] Full traceback:\n{traceback.format_exc()}")
+        try:
+            await client_ws.send_json({
+                "type": "error",
+                "code": "UNKNOWN",
+                "message": f"Server error: {type(e).__name__}",
+            })
+        except Exception as close_err:
+            log(f"[flow-local] Could not send error message: {close_err}")
+    finally:
+        if keepalive_task:
+            keepalive_task.cancel()
+    log("[flow-local] Session ended")
+
+
+# ---------------------------------------------------------------------------
+# Ollama warmup
+# ---------------------------------------------------------------------------
+
+async def warmup_ollama():
+    """Send a warmup request so the model is loaded in memory."""
+    log(f"[flow-local] Warming up Ollama ({OLLAMA_MODEL})...")
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                OLLAMA_URL,
+                json={
+                    "model": OLLAMA_MODEL,
+                    "messages": [
+                        {"role": "user", "content": "Translate: hello"},
+                    ],
+                    "stream": False,
+                    "options": {"num_predict": 5},
+                },
+            )
+            data = resp.json()
+            result = data.get("message", {}).get("content", "")
+            log(f"[flow-local] Ollama warm: '{result}'")
+    except Exception as e:
+        log(f"[flow-local] Ollama warmup failed: {e}")
+        log("[flow-local] Make sure Ollama is running: ollama serve")
+
+
+@app.on_event("startup")
+async def startup():
+    await warmup_ollama()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import uvicorn
+    log("")
+    log("  ╔══════════════════════════════════════╗")
+    log("  ║   FLOW LOCAL — Bilingual Interpreter ║")
+    log("  ║   English ↔ Brazilian Portuguese      ║")
+    log("  ║   100% LOCAL — No cloud calls         ║")
+    log("  ║   http://localhost:8765               ║")
+    log("  ╚══════════════════════════════════════╝")
+    log("")
+    uvicorn.run(app, host="0.0.0.0", port=8765)

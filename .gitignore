@@ -1,0 +1,17 @@
+# Runtime / virtual env
+.venv/
+__pycache__/
+
+# Logs
+logs/
+*.log
+
+# Model binaries — large files, not for repo
+# Local copies remain on disk; only git tracking is removed.
+models/
+*.onnx
+*.bin
+*.gguf
+
+# macOS
+.DS_Store

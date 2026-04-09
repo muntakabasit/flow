@@ -1,0 +1,233 @@
+================================================================================
+FLOW APP - QUICK TEST CHECKLIST
+================================================================================
+
+Status: READY FOR TESTING
+Server: Running and healthy
+HTML: Restored from backup
+Time: Now
+
+================================================================================
+STEP 1: OPEN THE APP
+================================================================================
+
+1. Open your web browser (Chrome, Safari, Firefox, etc.)
+2. Go to: http://localhost:8765
+3. Hard refresh (clear cache):
+   - Mac:        Cmd + Shift + R
+   - Windows:    Ctrl + Shift + R
+   - Linux:      Ctrl + Shift + R
+
+Wait 5-10 seconds for page to fully load.
+
+================================================================================
+STEP 2: VISUAL CHECK
+================================================================================
+
+Look for these visual indicators (check off each one):
+
+[ ] Page loads smoothly (not blank, not frozen)
+[ ] Header shows "FLOW" logo and title
+[ ] Green dot appears in top-right corner (READY state)
+[ ] Waveform bars visible in the middle
+[ ] Microphone button visible (bottom center, circular)
+[ ] Settings/gear icon visible (top right area)
+[ ] Log button visible (bottom right area)
+
+If you DON'T see at least 5 of these, there's still an issue.
+Take a screenshot and report what you see.
+
+================================================================================
+STEP 3: DIAGNOSTICS CHECK
+================================================================================
+
+Click the Log button (bottom right) to open the diagnostic panel.
+Look for messages like:
+
+[ ] "[timestamp] Flow client loaded"
+[ ] "[timestamp] WebSocket connecting to ws://localhost:8765/ws"
+[ ] "[timestamp] WebSocket open"
+[ ] "[timestamp] ✅ Server ready gate opened"
+[ ] "[timestamp] IDLE → READY"
+
+If you see these messages = good!
+If you see NO messages = diagLog not working
+If you see RED error messages = there's a JavaScript error
+
+Document exactly what you see in the log.
+
+================================================================================
+STEP 4: BROWSER CONSOLE CHECK
+================================================================================
+
+Open browser console (F12 or right-click → Inspect → Console tab)
+Look for errors (red messages):
+
+[ ] No red error messages (GOOD)
+[ ] Has red error messages (BAD - note what they say)
+[ ] Has warnings but no errors (ACCEPTABLE)
+
+Copy any red error messages and report them.
+
+================================================================================
+STEP 5: MICROPHONE BUTTON TEST
+================================================================================
+
+1. Click the circular microphone button (bottom center)
+2. You should see:
+   [ ] Button changes color (visual feedback)
+   [ ] Waveform animation starts (bars moving)
+   [ ] Diagnostic log shows: "Mic open: 24000Hz"
+
+3. Speak clearly: "Hello" or "Olá" or anything
+4. You should see:
+   [ ] Waveform responds to your voice (bars move more)
+   [ ] Transcribed text appears in the main area
+
+5. Speak Portuguese (if you know it): "Olá tudo bem?" or similar
+6. You should see:
+   [ ] Another language appears in transcript
+   [ ] Translation appears on opposite side
+
+7. Click microphone button again to stop
+8. You should see:
+   [ ] Button returns to normal color
+   [ ] Waveform animation stops
+   [ ] Diagnostic log shows completion message
+
+Score: ____ of 8 steps completed
+
+================================================================================
+STEP 6: SETTINGS BUTTON TEST
+================================================================================
+
+1. Click the settings/gear icon (top right)
+2. Should open a modal dialog (not navigate to new page)
+   [ ] Modal appears (GOOD)
+   [ ] Page navigates away (BAD - settings broken)
+
+3. Look for:
+   [ ] "Voice Activity Detection" title
+   [ ] Sensitivity slider
+   [ ] Delay slider
+   [ ] Numeric values next to sliders
+   [ ] Save & Close button
+   [ ] X close button
+
+4. Adjust the sliders:
+   [ ] Sensitivity slider moves smoothly
+   [ ] Delay slider moves smoothly
+   [ ] Values update when you move sliders
+
+5. Click "Save & Close" button
+   [ ] Modal closes
+   [ ] You're back to main app view
+   [ ] Diagnostic log shows VAD settings saved
+
+Score: ____ of 8 steps completed
+
+================================================================================
+STEP 7: OVERALL RESPONSIVENESS TEST
+================================================================================
+
+Try these interactions (everything should be fast and responsive):
+
+[ ] Buttons respond immediately when clicked
+[ ] Animations are smooth (not jerky)
+[ ] Text appears without lag
+[ ] Scrolling works smoothly
+[ ] App doesn't freeze or show "spinning wheel"
+[ ] App doesn't crash
+
+Any delays or freezes? Note them: ________________
+
+================================================================================
+FINAL SCORING
+================================================================================
+
+Count up all your checks:
+
+GREEN SCORE:
+- Visual Check: ____ / 7
+- Diagnostics: ____ / 5
+- Microphone Test: ____ / 8
+- Settings Test: ____ / 8
+- Responsiveness: ____ / 6
+
+Total: ____ / 34 checks
+
+RATING:
+- 30-34 checks: ✅ APP IS WORKING PERFECTLY
+- 25-29 checks: ✅ APP IS WORKING WELL (minor issues)
+- 20-24 checks: ⚠️  APP IS PARTIALLY WORKING (has issues)
+- <20 checks: 🔴 APP IS STILL BROKEN
+
+================================================================================
+ERROR DOCUMENTATION
+================================================================================
+
+If you see ANY error messages (red text), copy them here:
+
+ERROR #1:
+_________________________________________________________________________
+_________________________________________________________________________
+
+ERROR #2:
+_________________________________________________________________________
+_________________________________________________________________________
+
+ERROR #3:
+_________________________________________________________________________
+_________________________________________________________________________
+
+Other issues noticed:
+_________________________________________________________________________
+_________________________________________________________________________
+
+================================================================================
+WHAT TO REPORT BACK
+================================================================================
+
+After completing this checklist, tell me:
+
+1. What was your FINAL SCORE? (____ / 34)
+
+2. Did the green dot appear? [ ] Yes [ ] No
+
+3. Did diagnostic logs show up? [ ] Yes [ ] No
+
+4. Could you speak and see transcription? [ ] Yes [ ] No
+
+5. Did Portuguese appear? [ ] Yes [ ] No
+
+6. Were there error messages? [ ] Yes [ ] No
+   If yes, what did they say?
+   ______________________________________________________________________
+
+7. Did settings modal work? [ ] Yes [ ] No
+
+8. How responsive was the app? (1=slow, 10=instant)
+   Rating: _____ / 10
+
+9. Overall, is the app working?
+   [ ] YES - FULLY WORKING
+   [ ] MOSTLY - HAS MINOR ISSUES
+   [ ] PARTIALLY - HAS PROBLEMS
+   [ ] NO - STILL BROKEN
+
+10. Any other observations?
+    ______________________________________________________________________
+    ______________________________________________________________________
+
+================================================================================
+THANK YOU FOR TESTING!
+================================================================================
+
+Once you report your findings, I'll know what to do next:
+- If working ✅: Verify all features and plan next steps
+- If broken 🔴: Debug and fix specific issues
+- If partial ⚠️: Fix reported issues then retest
+
+Send this checklist back with your scores and I'll take it from there!
+
+================================================================================

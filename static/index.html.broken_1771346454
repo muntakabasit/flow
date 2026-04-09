@@ -1,0 +1,2320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#08090c">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Flow">
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <title>Flow</title>
+  <style>
+    /* ═══════════════════════════════════════════════════════
+       FLOW — Operator-grade live interpreter
+       Design tokens + complete UI
+       ═══════════════════════════════════════════════════════ */
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box;
+      -webkit-tap-highlight-color:transparent; }
+
+    :root {
+      /* ── Palette ─────────────────────────────── */
+      --bg:        #08090c;
+      --surface:   #0e1017;
+      --surface2:  #14161e;
+      --surface3:  #1b1e28;
+      --border:    #1f2231;
+      --border-hi: #2a2e3d;
+
+      --text:      #e8eaf0;
+      --text-2:    #9399ad;
+      --text-3:    #5c6178;
+
+      /* accent: warm amber — distinctive, not default blue/teal */
+      --accent:    #e0a846;
+      --accent-dim:#7a5e28;
+      --accent-bg: rgba(224,168,70,0.08);
+      --accent-glow: rgba(224,168,70,0.15);
+
+      --green:     #34d399;
+      --green-dim: #16503b;
+      --red:       #f87171;
+      --red-dim:   #5c2323;
+      --amber:     #fbbf24;
+
+      --radius:    10px;
+      --radius-lg: 16px;
+      --safe-top:  env(safe-area-inset-top, 0px);
+      --safe-bot:  env(safe-area-inset-bottom, 0px);
+      --font:      'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      --font-mono: 'SF Mono', 'Menlo', 'Consolas', monospace;
+
+      /* ── MODE B: Glass + RMS intensity ────────── */
+      --glass-blur: 12px;
+      --glass-opacity: rgba(224,168,70,0.03);
+      --rms-intensity: 0;
+      --glow-strength: calc(var(--rms-intensity) * 20px + 8px);
+    }
+
+    html, body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      height: 100%; overflow: hidden;
+      touch-action: manipulation;
+      -webkit-user-select: none; user-select: none;
+    }
+
+    /* ═══ APP SHELL ═══════════════════════════════════════ */
+    .app {
+      display: flex; flex-direction: column;
+      height: 100%;
+      padding-top: var(--safe-top);
+      padding-bottom: var(--safe-bot);
+    }
+
+    /* ═══ HEADER ═════════════════════════════════════════ */
+    .hdr {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 16px 8px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      background: linear-gradient(180deg, rgba(14,16,23,1) 0%, var(--bg) 100%);
+    }
+    .hdr-brand {
+      display: flex; align-items: baseline; gap: 8px;
+    }
+    .hdr-logo {
+      font-size: 18px; font-weight: 800;
+      letter-spacing: 4px; text-transform: uppercase;
+      background: linear-gradient(135deg, var(--accent) 0%, #f0c66e 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hdr-tag {
+      font-size: 10px; font-weight: 500;
+      color: var(--text-3); letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+    .hdr-right { display: flex; align-items: center; gap: 8px; }
+
+    /* ── State pill ─────────────────────────────── */
+    .pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px 3px 8px;
+      border-radius: 20px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 1px;
+      color: var(--text-3);
+      transition: all .35s ease;
+    }
+    .pill-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--text-3);
+      transition: background .3s, box-shadow .3s;
+    }
+    /* State variants */
+    .pill[data-state="connecting"]  { color: var(--amber); }
+    .pill[data-state="connecting"] .pill-dot { background: var(--amber); animation: blink-dot 1s infinite; }
+    .pill[data-state="ready"]      { color: var(--green); border-color: var(--green-dim); }
+    .pill[data-state="ready"] .pill-dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .pill[data-state="listening"]  { color: var(--green); border-color: var(--green-dim); }
+    .pill[data-state="listening"] .pill-dot { background: var(--green); animation: pulse-dot 1.8s infinite; }
+    .pill[data-state="translating"] { color: var(--accent); border-color: var(--accent-dim); }
+    .pill[data-state="translating"] .pill-dot { background: var(--accent); animation: blink-dot .6s infinite; }
+    .pill[data-state="speaking"]   { color: var(--accent); border-color: var(--accent-dim); }
+    .pill[data-state="speaking"] .pill-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+    .pill[data-state="offline"]    { color: var(--red); border-color: var(--red-dim); }
+    .pill[data-state="offline"] .pill-dot { background: var(--red); }
+
+    @keyframes pulse-dot {
+      0%,100% { opacity:1; transform:scale(1); }
+      50% { opacity:.4; transform:scale(.75); }
+    }
+    @keyframes blink-dot {
+      0%,100% { opacity:1; } 50% { opacity:.25; }
+    }
+
+    /* ═══ RECONNECT BANNER ═══════════════════════════════ */
+    .reconnect-banner {
+      display: none; align-items: center; justify-content: center; gap: 10px;
+      padding: 8px 16px;
+      background: var(--red-dim);
+      border-bottom: 1px solid rgba(248,113,113,.3);
+      font-size: 12px; font-weight: 600; color: var(--red);
+      flex-shrink: 0;
+    }
+    .reconnect-banner.show { display: flex; animation: slideDown .25s ease-out; }
+    .reconnect-banner button {
+      background: rgba(248,113,113,.15); border: 1px solid rgba(248,113,113,.3);
+      color: var(--red); font-size: 11px; font-weight: 700; font-family: var(--font);
+      padding: 3px 12px; border-radius: 6px; cursor: pointer;
+      text-transform: uppercase; letter-spacing: .5px;
+    }
+    .reconnect-banner button:active { transform: scale(.95); }
+    @keyframes slideDown { from { transform: translateY(-100%); opacity:0; } to { transform: translateY(0); opacity:1; } }
+
+    /* ═══ LANG BAR ═══════════════════════════════════════ */
+    .lang-bar {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      padding: 6px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .lang-tag {
+      font-size: 11px; font-weight: 600; color: var(--text-3);
+      letter-spacing: .5px; text-transform: uppercase;
+    }
+    .lang-arrow { color: var(--accent); font-size: 13px; opacity: .6; }
+
+    /* ═══ TRANSCRIPT ═════════════════════════════════════ */
+    .transcript-wrap {
+      flex: 1; display: flex; flex-direction: column;
+      overflow: hidden; position: relative;
+      transition: flex-basis 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    /* MODE B: Collapsed state */
+    .transcript-wrap[data-collapsed="true"] {
+      flex-basis: 0; min-height: 0; flex: 0;
+    }
+    .transcript-wrap[data-collapsed="true"] .transcript {
+      display: none;
+    }
+
+    .transcript-toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 4px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0; min-height: 28px;
+    }
+    .transcript-toolbar span {
+      font-size: 10px; font-weight: 600; color: var(--text-3);
+      text-transform: uppercase; letter-spacing: 1px;
+    }
+    .transcript-toolbar button {
+      font-size: 10px; color: var(--accent); cursor: pointer;
+      background: none; border: none; font-family: var(--font);
+      font-weight: 600; letter-spacing: 0.5px;
+      padding: 4px 8px; border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .transcript-toolbar button:hover {
+      background: rgba(224,168,70,0.1);
+    }
+    .autoscroll-toggle {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 10px; color: var(--text-3); cursor: pointer;
+      background: none; border: none; font-family: var(--font);
+      padding: 2px 6px; border-radius: 4px;
+    }
+    .autoscroll-toggle:hover { background: var(--surface2); }
+    .autoscroll-toggle .check { color: var(--green); }
+
+    .transcript {
+      flex: 1; overflow-y: auto; padding: 8px 0;
+      -webkit-overflow-scrolling: touch;
+      scroll-behavior: smooth;
+      transition: opacity 0.25s;
+    }
+
+    /* Each turn = a row with source | translation */
+    /* ═══ PREMIUM TRANSCRIPT BUBBLES ═════════════════════ */
+    .t-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      animation: fadeRow .3s ease-out;
+      font-size: 14px; line-height: 1.55;
+    }
+    @keyframes fadeRow {
+      from { opacity:0; transform:translateY(8px); }
+      to { opacity:1; transform:translateY(0); }
+    }
+
+    /* Bubble styling */
+    .t-cell {
+      padding: 12px 14px;
+      min-height: 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: var(--surface2);
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      border: 1px solid var(--border);
+      transition: box-shadow 0.2s, background 0.2s;
+      word-wrap: break-word;
+    }
+
+    .t-cell:hover {
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    /* Source (you) bubble */
+    .t-src {
+      color: var(--text-2);
+      background: var(--surface2);
+      border-color: var(--border);
+    }
+
+    .t-src:hover {
+      background: var(--surface3);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    /* Translation (response) bubble */
+    .t-tgt {
+      color: var(--text);
+      font-weight: 500;
+      background: rgba(224, 168, 70, 0.08);
+      border-color: rgba(224, 168, 70, 0.25);
+    }
+
+    .t-tgt:hover {
+      background: rgba(224, 168, 70, 0.12);
+      box-shadow: 0 4px 12px rgba(224, 168, 70, 0.2);
+    }
+
+    .t-tgt.streaming::after {
+      content: "▍"; color: var(--accent); animation: caret .8s step-end infinite;
+      margin-left: 2px;
+    }
+    @keyframes caret { 50% { opacity:0; } }
+
+    .t-ts {
+      font-size: 8px; color: var(--text-3); font-family: var(--font-mono);
+    }
+
+    .t-speaker {
+      font-size: 9px; font-weight: 700; color: var(--accent); letter-spacing: 1px;
+      text-transform: uppercase; margin-bottom: 2px;
+    }
+    .t-src .t-speaker { color: var(--text-3); }
+    .t-tgt .t-speaker { color: var(--accent); }
+
+    .t-text {
+      font-size: 14px; line-height: 1.55;
+    }
+
+    .t-confidence {
+      font-size: 8px; color: var(--text-3);
+      display: inline-flex; gap: 3px; align-items: center;
+      margin-top: 4px;
+    }
+    .t-confidence.high { color: var(--green); }
+    .t-confidence.med { color: var(--amber); }
+    .t-confidence.low { color: var(--red); }
+
+    .t-system {
+      text-align: center;
+      font-size: 11px; color: var(--text-3);
+      padding: 8px 14px;
+      font-style: italic;
+      background: var(--surface);
+      border-radius: 8px;
+      margin: 4px 8px;
+    }
+
+    /* large text mode */
+    .app.large-text .t-tgt { font-size: 18px; }
+    .app.large-text .t-src { font-size: 15px; }
+
+    /* ═══ CONTROL DOCK (MODE B: Glass) ═════════════════ */
+    .dock {
+      flex-shrink: 0;
+      border-top: 1px solid rgba(224,168,70,0.1);
+      background: linear-gradient(180deg, rgba(14,16,23,0.5) 0%, rgba(8,9,12,0.8) 100%);
+      backdrop-filter: blur(var(--glass-blur));
+      padding: 12px 16px 16px;
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+    }
+
+    /* waveform */
+    .wave {
+      display: flex; align-items: center; justify-content: center;
+      gap: 2px; height: 20px; opacity: 0; transition: opacity .3s;
+    }
+    .wave.on { opacity: 1; }
+    .wave-bar {
+      width: 2.5px; border-radius: 2px;
+      background: var(--accent); height: 4px;
+      transition: height 80ms ease;
+    }
+
+    /* mic row */
+    .mic-row {
+      display: flex; align-items: center; gap: 20px;
+    }
+
+    /* THE MIC BUTTON */
+    .mic {
+      position: relative;
+      width: 72px; height: 72px; border-radius: 50%;
+      border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      outline: none; -webkit-appearance: none;
+      transition: all .25s ease;
+    }
+    .mic svg { width: 28px; height: 28px; transition: fill .25s; }
+    .mic-ring {
+      position: absolute; inset: -6px; border-radius: 50%;
+      border: 2px solid var(--accent); opacity: 0;
+      pointer-events: none;
+    }
+
+    /* mic states */
+    .mic[data-vis="idle"] {
+      background: var(--surface3); border: 2px solid var(--border-hi);
+    }
+    .mic[data-vis="idle"] svg { fill: var(--text-2); }
+    .mic[data-vis="idle"]:hover { border-color: var(--accent-dim); }
+    .mic[data-vis="idle"]:hover svg { fill: var(--accent); }
+
+    .mic[data-vis="live"] {
+      background: var(--accent); border: 2px solid var(--accent);
+      box-shadow: 0 0 30px var(--accent-glow);
+    }
+    .mic[data-vis="live"] svg { fill: var(--bg); }
+    .mic[data-vis="live"] .mic-ring {
+      opacity: .4; animation: ring-out 2s ease-out infinite;
+    }
+
+    .mic[data-vis="disabled"] {
+      background: var(--surface2); border: 2px solid var(--border);
+      cursor: not-allowed; opacity: .4;
+    }
+    .mic[data-vis="disabled"] svg { fill: var(--text-3); }
+
+    .mic:active:not([data-vis="disabled"]) { transform: scale(.92); }
+
+    @keyframes ring-out {
+      0% { transform:scale(1); opacity:.4; }
+      100% { transform:scale(1.6); opacity:0; }
+    }
+
+    /* status label under mic */
+    .mic-label {
+      font-size: 11px; font-weight: 600;
+      color: var(--text-3); text-transform: uppercase;
+      letter-spacing: 1px; text-align: center;
+      margin-top: -2px; min-height: 16px;
+    }
+
+    /* ═══ VOICE ORB STYLES ═══════════════════════════════ */
+    .mic.orb {
+      background: transparent;
+      border: none;
+      padding: 0;
+      width: 80px;
+      height: 80px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      outline: none;
+      -webkit-appearance: none;
+      transition: all .25s ease;
+      position: relative;
+    }
+
+    .mic.orb:hover {
+      transform: scale(1.05);
+    }
+
+    .mic.orb:active:not([data-vis="disabled"]) {
+      transform: scale(0.95);
+    }
+
+    .mic.orb:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 4px;
+    }
+
+    .orb-svg {
+      color: var(--text-2);
+      filter: drop-shadow(0 0 var(--glow-strength) rgba(224,168,70,0.3));
+      transition: color 0.3s ease, filter 0.2s ease;
+      backdrop-filter: blur(var(--glass-blur));
+    }
+
+    .orb-fallback {
+      display: none;
+      transition: display 0.3s ease;
+    }
+
+    /* Orb state colors (MODE B: Softer, glass-like) */
+    .mic.orb[data-vis="idle"] .orb-svg {
+      color: rgba(232,234,240,0.4);
+      filter: drop-shadow(0 0 6px rgba(224,168,70,0.1));
+    }
+
+    .mic.orb[data-vis="live"] .orb-svg {
+      color: var(--green);
+      filter: drop-shadow(0 0 var(--glow-strength) rgba(52,211,153,0.5));
+    }
+
+    .mic.orb[data-vis="disabled"] .orb-svg {
+      color: var(--text-3);
+      opacity: 0.4;
+    }
+
+    /* READY: Calm neutral glow */
+    .mic.orb[data-state="ready"] .orb-svg {
+      color: rgba(232,234,240,0.7);
+      animation: orb-pulse-breath 1.5s ease-in-out infinite;
+      filter: drop-shadow(0 0 8px rgba(224,168,70,0.15));
+    }
+
+    /* LISTENING: Reactive green pulse + waveform */
+    .mic.orb[data-state="listening"] .orb-svg {
+      color: var(--green);
+      animation: orb-breathing 2s ease-in-out infinite;
+      filter: drop-shadow(0 0 var(--glow-strength) rgba(52,211,153,0.6));
+    }
+
+    .mic.orb[data-state="listening"] .orb-waveform {
+      opacity: 1;
+      animation: orb-waveform-animate 0.5s linear infinite;
+      stroke: var(--green);
+    }
+
+    /* TRANSLATING: Slow shimmer with amber */
+    .mic.orb[data-state="translating"] .orb-svg {
+      color: var(--accent);
+      animation: orb-pulse-fast 1.2s ease-in-out infinite;
+      filter: drop-shadow(0 0 10px rgba(224,168,70,0.4));
+    }
+
+    /* SPEAKING: Warm output glow */
+    .mic.orb[data-state="speaking"] .orb-svg {
+      color: var(--accent);
+      animation: orb-glow-pulse 1.5s ease-in-out infinite;
+      filter: drop-shadow(0 0 16px rgba(224,168,70,0.5));
+    }
+
+    /* CONNECTING: Subtle spinner */
+    .mic.orb[data-state="connecting"] .orb-svg {
+      color: var(--amber);
+      animation: orb-spin 1s linear infinite;
+      filter: drop-shadow(0 0 8px rgba(251,191,36,0.3));
+    }
+
+    /* OFFLINE: Red tint + desaturated */
+    .mic.orb[data-state="offline"] .orb-svg {
+      opacity: 0.5;
+      color: var(--red);
+      filter: drop-shadow(0 0 12px rgba(248,113,113,0.4)) saturate(0.6);
+    }
+
+    /* ─ Waveform ring animation ─ */
+    @keyframes orb-waveform-animate {
+      0% { stroke-dasharray: 2,3; stroke-dashoffset: 0; }
+      100% { stroke-dasharray: 2,3; stroke-dashoffset: -5; }
+    }
+
+    /* ─ Breathing animation (LISTENING) ─ */
+    @keyframes orb-breathing {
+      0%, 100% {
+        transform: scale(1);
+        filter: drop-shadow(0 0 8px var(--green-glow, rgba(52, 211, 153, 0.5)));
+      }
+      50% {
+        transform: scale(1.15);
+        filter: drop-shadow(0 0 16px var(--green-glow, rgba(52, 211, 153, 0.8)));
+      }
+    }
+
+    /* ─ Pulse for READY state ─ */
+    @keyframes orb-pulse-breath {
+      0%, 100% {
+        opacity: 0.6;
+        filter: drop-shadow(0 0 4px var(--green-glow, rgba(52, 211, 153, 0.3)));
+      }
+      50% {
+        opacity: 1;
+        filter: drop-shadow(0 0 10px var(--green-glow, rgba(52, 211, 153, 0.6)));
+      }
+    }
+
+    /* ─ Fast pulse for TRANSLATING ─ */
+    @keyframes orb-pulse-fast {
+      0%, 100% {
+        opacity: 0.5;
+        filter: drop-shadow(0 0 6px var(--accent-glow, rgba(224, 168, 70, 0.5)));
+      }
+      50% {
+        opacity: 1;
+        filter: drop-shadow(0 0 14px var(--accent-glow, rgba(224, 168, 70, 0.8)));
+      }
+    }
+
+    /* ─ Glow pulse for SPEAKING ─ */
+    @keyframes orb-glow-pulse {
+      0%, 100% {
+        filter: drop-shadow(0 0 8px var(--accent-glow, rgba(224, 168, 70, 0.5)));
+      }
+      50% {
+        filter: drop-shadow(0 0 18px var(--accent-glow, rgba(224, 168, 70, 0.8)));
+      }
+    }
+
+    /* ─ Spinner for CONNECTING ─ */
+    @keyframes orb-spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    /* side actions */
+    .side-btn {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-3); font-size: 10px; font-weight: 600;
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      padding: 6px 8px; border-radius: 8px; min-width: 48px;
+      font-family: var(--font); text-transform: uppercase; letter-spacing: .5px;
+      transition: all .15s;
+    }
+    .side-btn svg { width: 20px; height: 20px; fill: var(--text-3); transition: fill .15s; }
+    .side-btn.on svg { fill: var(--accent); }
+    .side-btn.on { color: var(--accent); }
+    .side-btn:active { transform: scale(.9); }
+
+    /* ═══ DIAGNOSTICS PANEL ══════════════════════════════ */
+    .diag {
+      flex-shrink: 0;
+      max-height: 0; overflow: hidden;
+      transition: max-height .3s ease;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .diag.open { max-height: 200px; }
+    .diag-inner {
+      padding: 8px 14px;
+      font-family: var(--font-mono);
+      font-size: 10px; line-height: 1.6;
+      color: var(--text-3);
+      max-height: 180px; overflow-y: auto;
+    }
+    .diag-line { margin-bottom: 1px; }
+    .diag-line.err { color: var(--red); }
+    .diag-line.ok  { color: var(--green); }
+
+    /* ═══ MEDIA QUERIES ══════════════════════════════════ */
+    @media (pointer: coarse) {
+      .mic { width: 80px; height: 80px; }
+      .mic svg { width: 32px; height: 32px; }
+    }
+    @media (max-height: 580px) {
+      .mic { width: 64px; height: 64px; }
+      .mic svg { width: 24px; height: 24px; }
+      .dock { padding: 8px 16px 10px; gap: 6px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .01ms !important; transition-duration: .01ms !important;
+      }
+    }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  </style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ═══ HEADER ═══ -->
+  <header class="hdr">
+    <div class="hdr-brand">
+      <div class="hdr-logo">Flow</div>
+      <div class="hdr-tag">Interpreter</div>
+    </div>
+    <div class="hdr-right">
+      <div class="pill" id="pill" data-state="idle" role="status" aria-live="polite">
+        <span class="pill-dot"></span>
+        <span id="pillLabel">idle</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══ RECONNECT BANNER ═══ -->
+  <div class="reconnect-banner" id="reconnBar">
+    <span id="reconnMsg">Reconnecting&hellip;</span>
+    <button id="reconnBtn" aria-label="Reconnect now">Reconnect</button>
+  </div>
+
+  <!-- ═══ LANGUAGE BAR ═══ -->
+  <div class="lang-bar" aria-label="Translation direction">
+    <span class="lang-tag">English</span>
+    <span class="lang-arrow">&#8644;</span>
+    <span class="lang-tag">Portugu&ecirc;s</span>
+  </div>
+
+  <!-- ═══ TRANSCRIPT ═══ -->
+  <div class="transcript-wrap">
+    <div class="transcript-toolbar">
+      <span>Transcript</span>
+      <button class="autoscroll-toggle" id="scrollToggle" aria-pressed="true">
+        <span class="check" id="scrollCheck">&#10003;</span> Auto-scroll
+      </button>
+    </div>
+    <div class="transcript" id="transcript" role="log" aria-label="Translation log" aria-live="polite"></div>
+  </div>
+
+  <!-- ═══ DIAGNOSTICS (collapsible) ═══ -->
+  <div class="diag" id="diag">
+    <div class="diag-inner" id="diagInner"></div>
+  </div>
+
+  <!-- ═══ CONTROL DOCK ═══ -->
+  <div class="dock">
+    <!-- waveform -->
+    <div class="wave" id="wave" aria-hidden="true"></div>
+
+    <div class="mic-row">
+      <!-- audio toggle -->
+      <button class="side-btn on" id="audioBtn" aria-label="Toggle spoken output" aria-pressed="true">
+        <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+        <span>Audio</span>
+      </button>
+
+      <!-- MIC COLUMN -->
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+        <!-- VOICE ORB BUTTON -->
+        <button class="mic orb" id="micBtn" data-vis="idle" data-state="idle"
+                aria-label="Start interpreting" role="switch" aria-checked="false" tabindex="0">
+          <svg class="orb-svg" viewBox="0 0 120 120" width="72" height="72" style="color:var(--text-2);">
+            <!-- Outer glow ring (appears when active) -->
+            <circle class="orb-glow" cx="60" cy="60" r="58" fill="none" stroke="currentColor" stroke-width="2" opacity="0"/>
+
+            <!-- 3 concentric circles for orb effect -->
+            <circle class="orb-circle orb-1" cx="60" cy="60" r="45" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"/>
+            <circle class="orb-circle orb-2" cx="60" cy="60" r="35" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.5"/>
+            <circle class="orb-circle orb-3" cx="60" cy="60" r="25" fill="none" stroke="currentColor" stroke-width="2" opacity="0.8"/>
+
+            <!-- Center filled circle -->
+            <circle class="orb-core" cx="60" cy="60" r="15" fill="currentColor" opacity="0.9"/>
+
+            <!-- Waveform rim (animated during listening) -->
+            <g class="orb-waveform" opacity="0">
+              <circle cx="60" cy="60" r="50" fill="none" stroke="currentColor" stroke-width="1" opacity="0.2" stroke-dasharray="2,3"/>
+            </g>
+          </svg>
+
+          <!-- Fallback mic icon if SVG doesn't load -->
+          <svg class="orb-fallback" viewBox="0 0 24 24" style="position:absolute;width:28px;height:28px;fill:currentColor;display:none;">
+            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+          </svg>
+        </button>
+        <div class="mic-label" id="micLabel" style="font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;margin-top:4px;"></div>
+      </div>
+
+      <!-- diag + text-size -->
+      <button class="side-btn" id="diagBtn" aria-label="Toggle diagnostics" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9 1.96 2.5H17V9.5h2.5zm-1.5 9c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+        <span>Log</span>
+      </button>
+
+      <!-- Settings button -->
+      <button class="side-btn" id="settingsBtn" aria-label="Voice Activity Detection settings" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l1.72-1.35c.15-.12.19-.34.1-.51l-1.63-2.83c-.12-.22-.37-.29-.59-.22l-2.03.8c-.42-.32-.9-.6-1.44-.78l-.3-2.16c-.04-.24-.24-.41-.48-.41h-3.27c-.24 0-.43.17-.47.41l-.3 2.16c-.54.18-1.02.46-1.44.78l-2.03-.8c-.22-.09-.47 0-.59.22L2.74 8.87c-.1.17-.06.39.1.51l1.72 1.35c-.05.3-.07.62-.07.94s.02.64.07.94l-1.72 1.35c-.15.12-.19.34-.1.51l1.63 2.83c.12.22.37.29.59.22l2.03-.8c.42.32.9.6 1.44.78l.3 2.16c.05.24.24.41.48.41h3.27c.24 0 .44-.17.47-.41l.3-2.16c.54-.18 1.02-.46 1.44-.78l2.03.8c.22.09.47 0 .59-.22l1.63-2.83c.1-.17.06-.39-.1-.51l-1.72-1.35zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+        <span>VAD</span>
+      </button>
+
+      <!-- Manual OFF button -->
+      <button class="side-btn" id="offBtn" aria-label="Manually stop session" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+        <span>OFF</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   FLOW CLIENT — State machine, reconnect, operator-grade
+   ═══════════════════════════════════════════════════════════ */
+'use strict';
+
+const RATE = 24000;                // wire sample rate
+const BACKOFF = [300,600,1200,2400,4800,8000,15000]; // exponential backoff with jitter (ms)
+const MAX_BACKOFF_ATTEMPTS = 10;   // give up after 10 attempts, show "tap to reconnect"
+const STABLE_MS = 2000;            // connection must hold this long to reset backoff
+const KEEPALIVE_TIMEOUT_DEFAULT = 60000;   // default: if no pong in 60s, die socket
+const KEEPALIVE_INTERVAL = 20000;  // client sends keepalive ping every 20s
+let KEEPALIVE_TIMEOUT = KEEPALIVE_TIMEOUT_DEFAULT;  // will be updated by server
+const WAVE_N = 15;                 // number of waveform bars
+
+// ── STATE ENUM ────────────────────────────────────────────
+const S = Object.freeze({
+  IDLE:        'idle',
+  CONNECTING:  'connecting',
+  READY:       'ready',
+  LISTENING:   'listening',
+  TRANSLATING: 'translating',
+  SPEAKING:    'speaking',
+  OFFLINE:     'offline',
+  FAILED:      'failed',
+});
+
+// ── APP STATE (single source of truth) ────────────────────
+let state      = S.IDLE;
+let ws         = null;
+let audioCtx   = null;
+let mediaStream= null;
+let processor  = null;
+let playCtx    = null;
+let audioQ     = [];
+
+// ── CLIENT-SIDE VAD (Voice Activity Detection) ────────────────────
+// RMS-based endpointing with hysteresis
+let vad = {
+  // Settings (persisted in localStorage)
+  sensitivity: 0.5,        // 0.0 (sensitive) → 1.0 (insensitive)
+  endDelayMs: 650,         // silence duration before finalization
+
+  // Runtime state
+  rmsSmoothed: 0,          // smoothed RMS energy
+  isSpeaking: false,       // speech detected (hysteresis)
+  silenceStart: null,      // when silence began
+
+  // Thresholds (derived from sensitivity)
+  get speechStartThreshold() {
+    // Lower = more sensitive. Range: 0.004 (max sensitive) → 0.015 (min sensitive)
+    return 0.004 + this.sensitivity * 0.011;
+  },
+  get speechStopThreshold() {
+    // Hysteresis: stop threshold lower than start threshold
+    return this.speechStartThreshold * 0.7;
+  },
+
+  // Update RMS every frame
+  updateRMS(audioFrame) {
+    // Calculate RMS from audio frame
+    let sum = 0;
+    for (let i = 0; i < audioFrame.length; i++) {
+      const s = audioFrame[i];
+      sum += s * s;
+    }
+    const rms = Math.sqrt(sum / audioFrame.length);
+
+    // Smooth with exponential moving average (α = 0.1 = responsive but not jittery)
+    const alpha = 0.1;
+    this.rmsSmoothed = this.rmsSmoothed * (1 - alpha) + rms * alpha;
+
+    return this.rmsSmoothed;
+  },
+
+  // Detect speech onset/offset with hysteresis
+  detectSpeech() {
+    if (!this.isSpeaking && this.rmsSmoothed > this.speechStartThreshold) {
+      // Speech detected (crossing up)
+      this.isSpeaking = true;
+      this.silenceStart = null;
+      return { event: 'speech_start', rms: this.rmsSmoothed };
+    }
+
+    if (this.isSpeaking && this.rmsSmoothed < this.speechStopThreshold) {
+      // Silence detected (crossing down) — start counting
+      if (this.silenceStart === null) {
+        this.silenceStart = performance.now();
+      }
+
+      const silenceDuration = performance.now() - this.silenceStart;
+      if (silenceDuration > this.endDelayMs) {
+        // Silence threshold reached — finalize
+        this.isSpeaking = false;
+        this.silenceStart = null;
+        return { event: 'speech_end', duration: silenceDuration, rms: this.rmsSmoothed };
+      }
+    }
+
+    // Still in speech or waiting for silence threshold
+    return { event: 'none' };
+  },
+
+  // Load from localStorage
+  load() {
+    const saved = localStorage.getItem('vad-settings');
+    if (saved) {
+      try {
+        const data = JSON.parse(saved);
+        this.sensitivity = data.sensitivity || 0.5;
+        this.endDelayMs = data.endDelayMs || 650;
+      } catch(e) {
+        // Invalid data, use defaults
+      }
+    }
+  },
+
+  // Save to localStorage
+  save() {
+    localStorage.setItem('vad-settings', JSON.stringify({
+      sensitivity: this.sensitivity,
+      endDelayMs: this.endDelayMs,
+    }));
+  },
+
+  // Reset for new session
+  reset() {
+    this.rmsSmoothed = 0;
+    this.isSpeaking = false;
+    this.silenceStart = null;
+  }
+};
+
+// Load VAD settings on startup
+vad.load();
+let playing    = false;
+let peakLvl    = 0;
+let waveAnim   = null;
+let chunksSent = 0;
+
+let reconnIdx  = 0;           // index into BACKOFF
+let reconnTimer= null;
+let stableTimer= null;
+let sessionWanted = false;    // CRITICAL: default to false - user must tap mic (no auto-start on load)
+let wsWanted = true;          // keep WS alive (false only after OFF)
+let failedReconnectCount = 0; // track consecutive failed reconnects (grace policy)
+
+// Reliability mode (runtime configurable)
+let reliabilityMode = localStorage.getItem('reliabilityMode') || 'stable'; // 'stable' or 'fast'
+let isModeSwitchRequested = false; // track if we need to send mode to server
+
+// ── INITIALIZE RUNTIME MODE FROM QUERY PARAMS ──────────────
+(function initializeMode() {
+  // Check query param (?mode=stable|fast) first
+  const params = new URLSearchParams(window.location.search);
+  const queryMode = params.get('mode');
+  if (queryMode && (queryMode === 'stable' || queryMode === 'fast')) {
+    reliabilityMode = queryMode;
+    localStorage.setItem('reliabilityMode', reliabilityMode);
+    console.log(`[INIT] Mode from query param: ${queryMode}`);
+  } else if (localStorage.getItem('reliabilityMode')) {
+    reliabilityMode = localStorage.getItem('reliabilityMode');
+    console.log(`[INIT] Mode from localStorage: ${reliabilityMode}`);
+  } else {
+    reliabilityMode = 'stable';
+    localStorage.setItem('reliabilityMode', reliabilityMode);
+    console.log('[INIT] Mode defaulted to: stable');
+  }
+})();
+
+// Keepalive tracking (client-side timeout detection)
+let lastPongTime = 0;         // timestamp of last pong received
+let keepaliveTimer = null;    // checks if pong received in time
+let clientKeepaliveTask = null; // sends keepalive ping every KEEPALIVE_INTERVAL
+
+let autoScroll = true;
+let audioOn    = true;
+let diagOpen   = false;
+let largeText  = false;
+let holdToTalkMode = false;     // Must be defined at top level (referenced in turn_complete)
+let isHoldingMic = false;       // Track if user is holding mic in hold-to-talk mode
+
+let currentSrcEl  = null;
+let currentTgtEl  = null;
+let currentTgtTxt = '';
+let sessionId      = null;      // current session ID
+let sessionHistory = [];        // in-memory transcript
+
+// ── DOM REFS ──────────────────────────────────────────────
+const $app       = document.getElementById('app');
+const $pill      = document.getElementById('pill');
+const $pillLabel = document.getElementById('pillLabel');
+const $reconnBar = document.getElementById('reconnBar');
+const $reconnMsg = document.getElementById('reconnMsg');
+const $reconnBtn = document.getElementById('reconnBtn');
+const $transcript= document.getElementById('transcript');
+const $scrollToggle = document.getElementById('scrollToggle');
+const $scrollCheck  = document.getElementById('scrollCheck');
+const $wave      = document.getElementById('wave');
+const $micBtn    = document.getElementById('micBtn');
+const $micLabel  = document.getElementById('micLabel');
+const $audioBtn  = document.getElementById('audioBtn');
+const $diagBtn   = document.getElementById('diagBtn');
+const $diag      = document.getElementById('diag');
+const $diagInner = document.getElementById('diagInner');
+
+// build waveform bars
+for (let i = 0; i < WAVE_N; i++) {
+  const b = document.createElement('div');
+  b.className = 'wave-bar';
+  $wave.appendChild(b);
+}
+const waveBars = $wave.querySelectorAll('.wave-bar');
+
+// ── HAPTIC ────────────────────────────────────────────────
+function haptic(ms = 10) { navigator.vibrate && navigator.vibrate(ms); }
+
+// ── DIAGNOSTICS LOG ───────────────────────────────────────
+function diagLog(msg, type = '') {
+  const ts = new Date().toLocaleTimeString('en-US', {hour12:false});
+  const el = document.createElement('div');
+  el.className = 'diag-line' + (type ? ' '+type : '');
+  el.textContent = `[${ts}] ${msg}`;
+  $diagInner.appendChild(el);
+  if ($diagInner.children.length > 100) $diagInner.removeChild($diagInner.firstChild);
+  $diagInner.scrollTop = $diagInner.scrollHeight;
+}
+
+// ═══════════════════════════════════════════════════════════
+// STATE MACHINE — single transition point
+// ═══════════════════════════════════════════════════════════
+// Valid state transitions (state machine)
+const VALID_TRANSITIONS = {
+  [S.IDLE]:        [S.CONNECTING, S.OFFLINE],
+  [S.CONNECTING]:  [S.READY, S.OFFLINE, S.FAILED],
+  [S.READY]:       [S.LISTENING, S.OFFLINE, S.FAILED],
+  [S.LISTENING]:   [S.TRANSLATING, S.READY, S.SPEAKING, S.OFFLINE, S.FAILED],
+  [S.TRANSLATING]: [S.SPEAKING, S.READY, S.LISTENING, S.OFFLINE, S.FAILED],
+  [S.SPEAKING]:    [S.READY, S.LISTENING, S.OFFLINE, S.FAILED],
+  [S.OFFLINE]:     [S.CONNECTING, S.IDLE],
+  [S.FAILED]:      [S.CONNECTING, S.IDLE],
+};
+
+function transition(next) {
+  // Guard: no-op if already in state
+  if (next === state) return;
+
+  const prev = state;
+
+  // CRITICAL: Validate transition is allowed
+  const allowed = VALID_TRANSITIONS[prev] || [];
+  if (!allowed.includes(next)) {
+    diagLog(`❌ INVALID: ${prev} → ${next} (allowed: ${allowed.join(', ')})`, 'err');
+    return;  // Reject invalid transition
+  }
+
+  state = next;
+  diagLog(`${prev} → ${next}`, 'ok');
+
+  // pill
+  $pill.dataset.state = next;
+  $pillLabel.textContent = next;
+
+  // orb animations: set data-state for CSS animations
+  $micBtn.dataset.state = next;
+
+  // reconnect banner
+  $reconnBar.classList.toggle('show', next === S.OFFLINE);
+
+  // mic button visual
+  if (next === S.OFFLINE) {
+    $micBtn.dataset.vis = 'disabled';
+    $micLabel.textContent = 'offline';
+  } else if (next === S.IDLE) {
+    $micBtn.dataset.vis = 'idle';
+    $micLabel.textContent = '';
+  } else if (next === S.CONNECTING) {
+    $micBtn.dataset.vis = 'disabled';
+    $micLabel.textContent = 'connecting';
+  } else if (next === S.READY) {
+    $micBtn.dataset.vis = 'idle';
+    $micLabel.textContent = 'ready';
+  } else if (next === S.LISTENING) {
+    $micBtn.dataset.vis = 'live';
+    $micLabel.textContent = 'listening';
+  } else if (next === S.TRANSLATING) {
+    $micBtn.dataset.vis = 'live';
+    $micLabel.textContent = 'translating';
+  } else if (next === S.SPEAKING) {
+    $micBtn.dataset.vis = 'live';
+    $micLabel.textContent = 'speaking';
+  }
+
+  // mic aria
+  const isLive = [S.LISTENING, S.TRANSLATING, S.SPEAKING].includes(next);
+  $micBtn.setAttribute('aria-checked', isLive);
+  $micBtn.setAttribute('aria-label', isLive ? 'Stop interpreting' : 'Start interpreting');
+
+  // waveform
+  if (isLive) startWave(); else stopWave();
+
+  // on offline/failed: stop mic cleanly
+  if (next === S.OFFLINE || next === S.FAILED) {
+    killMic();
+    killPlayback();
+  }
+
+  // cleanup keepalive timers on disconnect states
+  if (next === S.OFFLINE || next === S.FAILED || next === S.IDLE) {
+    if (keepaliveTimer) { clearInterval(keepaliveTimer); keepaliveTimer = null; }
+    if (clientKeepaliveTask) { clearInterval(clientKeepaliveTask); clientKeepaliveTask = null; }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// AUDIO UTILITIES
+// ═══════════════════════════════════════════════════════════
+function resample(inp, rateIn, rateOut) {
+  if (rateIn === rateOut) return inp;
+  const ratio = rateIn / rateOut;
+  const len = Math.round(inp.length / ratio);
+  const out = new Float32Array(len);
+  for (let i = 0; i < len; i++) {
+    const si = i * ratio, lo = Math.floor(si);
+    const hi = Math.min(lo+1, inp.length-1), f = si - lo;
+    out[i] = inp[lo]*(1-f) + inp[hi]*f;
+  }
+  return out;
+}
+function f32toI16(f32) {
+  const i16 = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++) {
+    const s = Math.max(-1, Math.min(1, f32[i]));
+    i16[i] = s < 0 ? s*0x8000 : s*0x7FFF;
+  }
+  return i16;
+}
+function i16toB64(i16) {
+  const bytes = new Uint8Array(i16.buffer);
+  const C = 8192; let bin = '';
+  for (let i = 0; i < bytes.length; i += C) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i+C, bytes.length)));
+  }
+  return btoa(bin);
+}
+function timeStr() {
+  return new Date().toLocaleTimeString('en-US', {hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+
+// ═══════════════════════════════════════════════════════════
+// WAVEFORM
+// ═══════════════════════════════════════════════════════════
+function startWave() {
+  $wave.classList.add('on');
+  if (waveAnim) cancelAnimationFrame(waveAnim);
+  (function tick() {
+    const lvl = vad.isSpeaking ? Math.min(peakLvl * 80, 24) : 2;
+    for (let i = 0; i < waveBars.length; i++) {
+      const h = 4 + Math.random() * Math.max(lvl, 2);
+      waveBars[i].style.height = h + 'px';
+    }
+    waveAnim = requestAnimationFrame(tick);
+  })();
+}
+function stopWave() {
+  $wave.classList.remove('on');
+  if (waveAnim) { cancelAnimationFrame(waveAnim); waveAnim = null; }
+  waveBars.forEach(b => b.style.height = '4px');
+}
+
+// ═══════════════════════════════════════════════════════════
+// TRANSCRIPT RENDERING
+// ═══════════════════════════════════════════════════════════
+function addSystemRow(text) {
+  const row = document.createElement('div');
+  row.className = 't-row';
+  row.innerHTML = `<div class="t-cell t-system">${text}</div>`;
+  $transcript.appendChild(row);
+  scrollTranscript();
+}
+function addSourceRow(text) {
+  const row = document.createElement('div');
+  row.className = 't-row';
+  row.innerHTML = `
+    <div class="t-cell t-src">
+      <span class="t-ts">${timeStr()}</span>
+      <span class="t-speaker">YOU</span>
+      <span class="t-text">${esc(text)}</span>
+    </div>
+    <div class="t-cell t-tgt" id="tgt-active">
+      <span class="t-speaker">TRANSLATION</span>
+    </div>`;
+  $transcript.appendChild(row);
+  currentSrcEl = row.querySelector('.t-src');
+  currentTgtEl = row.querySelector('.t-tgt');
+  currentTgtTxt = '';
+  scrollTranscript();
+}
+function appendTranslation(delta) {
+  if (!currentTgtEl) {
+    // orphan delta — create a row
+    const row = document.createElement('div');
+    row.className = 't-row';
+    row.innerHTML = `<div class="t-cell t-src"></div><div class="t-cell t-tgt streaming">
+      <span class="t-speaker">TRANSLATION</span>
+    </div>`;
+    $transcript.appendChild(row);
+    currentTgtEl = row.querySelector('.t-tgt');
+    currentTgtTxt = '';
+  }
+  currentTgtEl.classList.add('streaming');
+  currentTgtTxt += delta;
+
+  // Remove existing text if any, keep speaker label
+  let textEl = currentTgtEl.querySelector('.t-text');
+  if (!textEl) {
+    textEl = document.createElement('span');
+    textEl.className = 't-text';
+    currentTgtEl.appendChild(textEl);
+  }
+  textEl.textContent = currentTgtTxt;
+  scrollTranscript();
+}
+function finishTranslation(finalText, confidence = null) {
+  if (currentTgtEl) {
+    currentTgtEl.classList.remove('streaming');
+    if (finalText) {
+      // Clear speaker label only, keep it
+      const speakerEl = currentTgtEl.querySelector('.t-speaker');
+      const existingText = currentTgtEl.querySelector('.t-text');
+      if (existingText) existingText.remove();
+
+      const textEl = document.createElement('span');
+      textEl.className = 't-text';
+      textEl.textContent = finalText;
+      currentTgtEl.appendChild(textEl);
+
+      // Add confidence if provided
+      if (confidence !== null) {
+        const confEl = document.createElement('span');
+        confEl.className = 't-confidence';
+        if (confidence >= 80) {
+          confEl.classList.add('high');
+          confEl.textContent = `🟢 ${confidence}%`;
+        } else if (confidence >= 60) {
+          confEl.classList.add('med');
+          confEl.textContent = `🟡 ${confidence}%`;
+        } else {
+          confEl.classList.add('low');
+          confEl.textContent = `🔴 ${confidence}%`;
+        }
+        currentTgtEl.appendChild(confEl);
+      }
+    }
+  }
+  currentSrcEl = null; currentTgtEl = null; currentTgtTxt = '';
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function scrollTranscript() {
+  if (autoScroll) $transcript.scrollTop = $transcript.scrollHeight;
+}
+
+// limit transcript rows
+function trimTranscript() {
+  while ($transcript.children.length > 60) $transcript.removeChild($transcript.firstChild);
+}
+
+// Session persistence
+function initSession() {
+  sessionId = 'session_' + Date.now();
+  sessionHistory = [];
+  try {
+    localStorage.setItem('flow_current_session', sessionId);
+  } catch (e) { console.warn('localStorage unavailable'); }
+
+  // Send mode preference to server (if WebSocket ready)
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'mode_preference',
+      mode: reliabilityMode
+    }));
+    diagLog(`Sent mode preference: ${reliabilityMode}`, 'ok');
+  }
+}
+
+function saveExchange(source, target, confidence = null) {
+  const exchange = { timestamp: Date.now(), source, target, confidence };
+  sessionHistory.push(exchange);
+  try {
+    const sessions = JSON.parse(localStorage.getItem('flow_sessions') || '{}');
+    if (!sessions[sessionId]) sessions[sessionId] = { started: Date.now(), exchanges: [] };
+    sessions[sessionId].exchanges.push(exchange);
+    localStorage.setItem('flow_sessions', JSON.stringify(sessions));
+  } catch (e) { console.warn('localStorage save failed'); }
+}
+
+function loadSessionHistory() {
+  try {
+    const currentId = localStorage.getItem('flow_current_session');
+    if (!currentId) return;
+    const sessions = JSON.parse(localStorage.getItem('flow_sessions') || '{}');
+    if (sessions[currentId]) {
+      sessionHistory = sessions[currentId].exchanges || [];
+      return sessionHistory;
+    }
+  } catch (e) { console.warn('localStorage load failed'); }
+  return [];
+}
+
+// ═══════════════════════════════════════════════════════════
+// AUDIO PLAYBACK
+// ═══════════════════════════════════════════════════════════
+function getPlayCtx() {
+  if (!playCtx || playCtx.state === 'closed')
+    playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: RATE });
+  return playCtx;
+}
+let ttsDoneNotified = false; // prevent duplicate tts_playback_done
+
+function enqueueAudio(b64) {
+  ttsDoneNotified = false;
+  if (!audioOn) { notifyTTSDone(); return; }
+  audioQ.push(b64);
+  if (!playing) drainQ();
+}
+function drainQ() {
+  if (!audioQ.length) { playing = false; notifyTTSDone(); return; }
+  playing = true;
+  const raw = atob(audioQ.shift());
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  const i16 = new Int16Array(bytes.buffer);
+  const f32 = new Float32Array(i16.length);
+  for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+  const ctx = getPlayCtx();
+  const buf = ctx.createBuffer(1, f32.length, RATE);
+  buf.getChannelData(0).set(f32);
+  const src = ctx.createBufferSource();
+  src.buffer = buf; src.connect(ctx.destination);
+  src.onended = drainQ; src.start();
+}
+function notifyTTSDone() {
+  if (ttsDoneNotified) return;
+  ttsDoneNotified = true;
+  if (ws && ws.readyState === WebSocket.OPEN)
+    ws.send(JSON.stringify({ type: 'tts_playback_done' }));
+}
+function killPlayback() {
+  audioQ = []; playing = false;
+  ttsDoneNotified = true; // prevent stale done signal after kill
+  if (playCtx && playCtx.state !== 'closed') { try { playCtx.close(); } catch(e){} playCtx = null; }
+}
+
+// ═══════════════════════════════════════════════════════════
+// MICROPHONE
+// ═══════════════════════════════════════════════════════════
+async function startMic() {
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount:1, echoCancellation:true, noiseSuppression:true, autoGainControl:true }
+    });
+  } catch (err) {
+    diagLog('Mic denied: ' + err.message, 'err');
+    addSystemRow('Microphone access denied. Grant permission and try again.');
+    sessionWanted = false;
+    transition(S.READY);
+    return;
+  }
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const nativeRate = audioCtx.sampleRate;
+  diagLog(`Mic open: ${nativeRate}Hz → ${RATE}Hz`);
+  const src = audioCtx.createMediaStreamSource(mediaStream);
+  processor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+  processor.onaudioprocess = (ev) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (state === S.OFFLINE) return;
+    try {
+      const inp = ev.inputBuffer.getChannelData(0);
+
+      // ─ RMS-based VAD ─
+      const rmsSmoothed = vad.updateRMS(inp);
+      const vadEvent = vad.detectSpeech();
+
+      // Log VAD events (optional, for debugging)
+      if (vadEvent.event === 'speech_start') {
+        diagLog(`VAD: Speech detected (RMS: ${rmsSmoothed.toFixed(4)})`, 'info');
+      } else if (vadEvent.event === 'speech_end') {
+        diagLog(`VAD: Silence ${vadEvent.duration.toFixed(0)}ms (RMS: ${rmsSmoothed.toFixed(4)})`, 'info');
+      }
+
+      // ─ BARGE-IN: interrupt TTS when user starts speaking ─
+      if (vadEvent.event === 'speech_start' && state === S.SPEAKING) {
+        diagLog('BARGE-IN: Speech detected during TTS, stopping playback', 'warn');
+        killPlayback();
+        // Notify server that TTS was interrupted
+        if (ws && ws.readyState === WebSocket.OPEN)
+          ws.send(JSON.stringify({ type: 'tts_playback_done' }));
+        transition(S.LISTENING);
+        haptic(10);
+      }
+
+      // ─ Peak level for waveform (unchanged) ─
+      let mx = 0;
+      for (let i = 0; i < inp.length; i++) { const a = Math.abs(inp[i]); if (a>mx) mx=a; }
+      peakLvl = peakLvl * 0.7 + mx * 0.3;
+
+      // Don't send audio while TTS is playing (echo suppression)
+      if (state === S.SPEAKING) return;
+
+      // Always stream audio to server while LISTENING — server has Silero VAD
+      // Client VAD is only for barge-in detection and waveform viz
+      if (state !== S.LISTENING) return;
+
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        // Connection lost - let ws.onclose handle reconnection
+        return;
+      }
+
+      try {
+        const rs = resample(inp, nativeRate, RATE);
+        ws.send(JSON.stringify({ type:'audio', audio: i16toB64(f32toI16(rs)) }));
+        chunksSent++;
+      } catch(e) {
+        // Send failed - connection might be dead
+        diagLog(`Audio send failed: ${e.message}`, 'err');
+        if (ws) ws.close();  // Trigger reconnect
+      }
+    } catch(e) {
+      // Audio processing error - log but don't crash
+      diagLog(`Audio process error: ${e.message}`, 'err');
+    }
+  };
+
+  src.connect(processor);
+  processor.connect(audioCtx.destination);
+  if (state === S.READY) transition(S.LISTENING);
+}
+
+function killMic() {
+  diagLog('Cleaning up mic resources', 'info');
+
+  if (processor) {
+    try { processor.disconnect(); } catch(e){}
+    processor = null;
+  }
+  if (audioCtx)  {
+    try { audioCtx.close(); } catch(e){}
+    audioCtx = null;
+  }
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t=>t.stop());
+    mediaStream = null;
+  }
+
+  chunksSent = 0;
+  peakLvl = 0;
+  vad.reset();  // Clear VAD state
+
+  diagLog('Mic resources cleaned', 'ok');
+}
+
+// ═══════════════════════════════════════════════════════════
+// WEBSOCKET + RECONNECT
+// ═══════════════════════════════════════════════════════════
+
+// Gate: ensures server is ready before allowing session
+let serverReadyGate = false;
+let isReconnecting = false;
+
+function wsConnect() {
+  // Prevent reconnect cascade
+  if (isReconnecting) {
+    diagLog('Already reconnecting, skipping duplicate attempt', 'info');
+    return;
+  }
+
+  // guard: don't create duplicates
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+  isReconnecting = true;
+  transition(S.CONNECTING);
+
+  // CRITICAL: Check if server is ready before connecting
+  // (Server needs time to load Whisper, Piper, VAD, Ollama models)
+  const proto = location.protocol === 'https:' ? 'https:' : 'http:';
+  const healthUrl = `${proto}//${location.host}/health`;
+
+  diagLog('Checking server health...', 'info');
+
+  fetch(healthUrl)
+    .then(r => r.json())
+    .then(data => {
+      if (data.status === 'ok') {
+        diagLog('Server ready, connecting WebSocket...', 'ok');
+        wsConnectNow();
+      } else {
+        diagLog(`Server not ready: ${data.status}`, 'err');
+        isReconnecting = false;
+        transition(S.OFFLINE);
+        if (wsWanted) scheduleReconnect();
+      }
+    })
+    .catch(err => {
+      diagLog(`Health check failed: ${err.message}. Retrying...`, 'err');
+      isReconnecting = false;
+      transition(S.OFFLINE);
+      if (wsWanted) scheduleReconnect();
+    });
+}
+
+function wsConnectNow() {
+  // Actually establish WebSocket connection (after health check passes)
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${proto}//${location.host}/ws`;
+  diagLog(`WebSocket connecting to ${url}`, 'ok');
+
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    diagLog(`WebSocket creation error: ${e.message}`, 'err');
+    isReconnecting = false;
+    transition(S.FAILED);
+    if (wsWanted) scheduleReconnect();
+    return;
+  }
+
+  ws.onopen = () => {
+    diagLog('WebSocket open', 'ok');
+    isReconnecting = false;
+    lastPongTime = Date.now();
+
+    // Start stability timer — if connection survives STABLE_MS, reset backoff
+    clearTimeout(stableTimer);
+    stableTimer = setTimeout(() => { reconnIdx = 0; }, STABLE_MS);
+
+    // Start client-side keepalive check
+    startClientKeepalive();
+
+    initSession();
+    // Don't transition to READY yet — wait for flow.ready from server
+    // Server may need time to initialize models (Whisper, Piper, etc.)
+    diagLog('WS open, awaiting flow.ready...', 'ok');
+  };
+
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      // Update pong timer on ANY message (to keep connection alive)
+      lastPongTime = Date.now();
+      handleMsg(msg);
+    } catch(e) {
+      diagLog('Parse error: '+e.message, 'err');
+    }
+  };
+
+  ws.onerror = (ev) => {
+    diagLog('⚠️ WebSocket error event', 'err');
+    diagLog(`Error details: ${JSON.stringify(ev)}`, 'err');
+    // Don't close here - let onclose handle it
+    // Closing might cause duplicate handling
+  };
+
+  ws.onclose = (ev) => {
+    // If we intentionally stopped, don't reconnect
+    if (stopInProgress) {
+      diagLog('Stop in progress, skipping reconnect logic in ws.onclose', 'info');
+      ws = null;
+      return;
+    }
+
+    clearTimeout(stableTimer);
+    if (keepaliveTimer) { clearInterval(keepaliveTimer); keepaliveTimer = null; }
+    if (clientKeepaliveTask) { clearInterval(clientKeepaliveTask); clientKeepaliveTask = null; }
+    isReconnecting = false;
+
+    // WebSocket telemetry
+    const closeCode = ev.code;
+    const closeReason = ev.reason || '(no reason)';
+    const tabVisible = !document.hidden;
+    const navigatorOnline = navigator.onLine;
+
+    diagLog(`🔌 WS closed: code=${closeCode} reason='${closeReason}'`, 'err');
+    diagLog(`Telemetry: visible=${tabVisible}, navigator.onLine=${navigatorOnline}`, 'info');
+    diagLog(`Reconnect progress: ${reconnIdx}/${MAX_BACKOFF_ATTEMPTS}`, 'info');
+
+    ws = null;
+
+    // Code 1000 = clean close (user initiated)
+    if (closeCode === 1000) {
+      transition(S.IDLE);
+      failedReconnectCount = 0;
+      diagLog('Clean close (user initiated)', 'ok');
+      return;
+    }
+
+    // Code 1006 = abnormal closure (usually network error or server crash)
+    if (closeCode === 1006) {
+      diagLog('Abnormal closure (network error or server restart)', 'err');
+    }
+
+    // Any other close = unexpected, try to reconnect
+    killMic();
+
+    // Grace policy: require 2 consecutive failed reconnect attempts before FAILED state
+    // This prevents showing "offline failed" on every one-off network hiccup
+    if (reconnIdx >= MAX_BACKOFF_ATTEMPTS) {
+      failedReconnectCount++;
+      if (failedReconnectCount >= 2) {
+        transition(S.FAILED); // give up after 2 consecutive failures
+        diagLog('Max reconnect attempts reached (2 consecutive failures)', 'err');
+      } else {
+        transition(S.OFFLINE);
+        diagLog(`Failed reconnect ${failedReconnectCount}/2 before FAILED state`, 'warn');
+      }
+    } else {
+      failedReconnectCount = 0; // Reset on new reconnect attempt
+      transition(S.OFFLINE);
+      diagLog(`Attempting to reconnect (attempt ${reconnIdx + 1}/${MAX_BACKOFF_ATTEMPTS})`, 'info');
+    }
+
+    if (wsWanted) scheduleReconnect();
+  };
+}
+
+// Start client-side keepalive: expects pong within KEEPALIVE_TIMEOUT
+function startClientKeepalive() {
+  if (clientKeepaliveTask) clearInterval(clientKeepaliveTask);
+  lastPongTime = Date.now();
+
+  // Send keepalive ping every 20s
+  clientKeepaliveTask = setInterval(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    try {
+      ws.send(JSON.stringify({ type: 'keepalive_ping' }));
+    } catch (e) {
+      diagLog(`Keepalive ping failed: ${e.message}`, 'err');
+    }
+  }, KEEPALIVE_INTERVAL);
+
+  // Check if pong received within timeout
+  if (keepaliveTimer) clearInterval(keepaliveTimer);
+  keepaliveTimer = setInterval(() => {
+    const timeSinceLastPong = Date.now() - lastPongTime;
+    if (timeSinceLastPong > KEEPALIVE_TIMEOUT) {
+      diagLog(`Keepalive timeout: no pong in ${KEEPALIVE_TIMEOUT}ms, killing socket`, 'err');
+      if (ws) ws.close();
+    }
+  }, KEEPALIVE_TIMEOUT / 2); // check every half the timeout
+}
+
+function scheduleReconnect() {
+  clearTimeout(reconnTimer);
+
+  // Cap attempts at MAX_BACKOFF_ATTEMPTS
+  if (reconnIdx >= MAX_BACKOFF_ATTEMPTS) {
+    $reconnMsg.textContent = `Connection failed. Tap to reconnect.`;
+    diagLog(`Reconnect capped at ${MAX_BACKOFF_ATTEMPTS} attempts`, 'err');
+    return;
+  }
+
+  // Exponential backoff from BACKOFF array
+  const baseDelay = BACKOFF[Math.min(reconnIdx, BACKOFF.length - 1)];
+
+  // Add jitter: ±25% randomness to prevent thundering herd
+  const jitter = baseDelay * (0.75 + Math.random() * 0.5);
+  const delay = Math.round(jitter);
+
+  // Reduce aggressiveness if tab hidden (be nice to background tabs)
+  const effectiveDelay = document.hidden ? delay * 3 : delay;
+
+  $reconnMsg.textContent = `Reconnecting in ${(effectiveDelay/1000).toFixed(1)}s\u2026`;
+  diagLog(`Reconnect in ${effectiveDelay}ms (attempt ${reconnIdx+1}/${MAX_BACKOFF_ATTEMPTS})`);
+
+  reconnTimer = setTimeout(() => {
+    reconnIdx++;
+    isReconnecting = false; // allow wsConnect to proceed
+    wsConnect();
+  }, effectiveDelay);
+}
+
+function forceReconnect() {
+  clearTimeout(reconnTimer);
+  reconnIdx = 0;
+  isReconnecting = false;
+  failedReconnectCount = 0;
+  diagLog('Manual reconnect', 'ok');
+  wsConnect();
+}
+
+// ═══════════════════════════════════════════════════════════
+// MESSAGE HANDLER
+// ═══════════════════════════════════════════════════════════
+function handleMsg(msg) {
+  switch (msg.type) {
+    case 'flow.ready':
+      // Update keepalive timeout from server (Stable: 90s, Fast: 45s)
+      if (msg.keepalive_timeout_ms) {
+        KEEPALIVE_TIMEOUT = msg.keepalive_timeout_ms;
+        diagLog(`Server ready: mode=${msg.reliability_mode} (keepalive: ${KEEPALIVE_TIMEOUT}ms)`);
+      }
+      serverReadyGate = true;
+
+      // CRITICAL: Enforce single mode source of truth - send client's mode preference immediately
+      // This prevents mode mismatch (server defaults to 'fast', client wants 'stable')
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'mode_preference',
+          mode: reliabilityMode
+        }));
+        diagLog(`Enforcing mode: ${reliabilityMode}`, 'ok');
+      }
+
+      transition(S.READY);
+      reconnIdx = 0;
+      failedReconnectCount = 0;
+      haptic(20);
+      // Note: Do NOT auto-start mic (sessionWanted is false by default)
+      break;
+
+    case 'mode_confirmed':
+      // Server acknowledged mode preference and applied it
+      if (msg.keepalive_timeout_ms) {
+        KEEPALIVE_TIMEOUT = msg.keepalive_timeout_ms;
+        diagLog(`Mode confirmed: ${msg.reliability_mode} (keepalive: ${KEEPALIVE_TIMEOUT}ms)`, 'ok');
+      }
+      break;
+
+    case 'ping':
+      // respond to server keepalive
+      lastPongTime = Date.now();
+      if (ws && ws.readyState === WebSocket.OPEN)
+        ws.send(JSON.stringify({ type:'pong' }));
+      break;
+
+    case 'pong':
+      // server responds to client keepalive
+      lastPongTime = Date.now();
+      break;
+
+    case 'keepalive_pong':
+      // explicit keepalive response
+      lastPongTime = Date.now();
+      break;
+
+    case 'speech_started':
+      transition(S.LISTENING); // confirm listening state
+      haptic();
+      break;
+
+    case 'speech_stopped':
+      if (state === S.LISTENING) transition(S.TRANSLATING);
+      break;
+
+    case 'source_transcript':
+      addSourceRow(msg.text);
+      trimTranscript();
+      break;
+
+    case 'translation_delta':
+      appendTranslation(msg.text);
+      break;
+
+    case 'translation_done': {
+      // Save before finishTranslation clears refs
+      const srcEl = currentSrcEl;
+      const tgtTxt = currentTgtTxt;
+      finishTranslation(msg.text, msg.confidence);
+      if (srcEl) {
+        const srcText = srcEl.querySelector('.t-text')?.textContent || '';
+        saveExchange(srcText, msg.text || tgtTxt, msg.confidence);
+      }
+      break;
+    }
+
+    case 'tts_start':
+      transition(S.SPEAKING);
+      break;
+
+    case 'audio_delta':
+      if (state !== S.SPEAKING) transition(S.SPEAKING);
+      enqueueAudio(msg.audio);
+      break;
+
+    case 'turn_complete':
+      finishTranslation();
+      // Auto-resume listening if NOT in hold-to-talk mode
+      const nextState = holdToTalkMode ? S.READY : S.LISTENING;
+      transition(nextState);
+      // Auto-restart mic for next turn if user wants a live session
+      if (sessionWanted && !mediaStream) startMic();
+      break;
+
+    case 'error':
+      addSystemRow(msg.message || 'Unknown error');
+      diagLog(msg.message || 'Server error', 'err');
+      // stay in current state, don't crash
+      break;
+
+    default:
+      diagLog(`Unknown msg: ${msg.type}`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// USER ACTIONS
+// ═══════════════════════════════════════════════════════════
+let stopInProgress = false;
+let startInProgress = false;   // P0: Prevent double-tap start flapping
+let restartInProgress = false;
+let restartTimeout = null;
+let lastStartAttempt = 0;      // P0: Debounce mic start (250ms minimum interval)
+
+function softStop() {
+  if (stopInProgress) {
+    diagLog('Stop already in progress, ignoring', 'warn');
+    return;
+  }
+
+  stopInProgress = true;
+  try {
+    diagLog('Session paused (soft stop)', 'info');
+    killMic();
+    killPlayback();
+    sessionWanted = false;
+
+    // Clear restart timeout if pending
+    clearTimeout(restartTimeout);
+    restartTimeout = null;
+    restartInProgress = false;
+
+    // Keep WebSocket open, just pause session
+    transition(S.READY);
+    haptic(20);
+  } finally {
+    stopInProgress = false;
+  }
+}
+
+function startSession() {
+  // P0: MIC BUTTON = START ONLY (IDEMPOTENT)
+  // If already listening/translating/speaking, IGNORE the click (do not stop)
+  if ([S.LISTENING, S.TRANSLATING, S.SPEAKING].includes(state)) {
+    diagLog('Mic click ignored during active session', 'info');
+    return;
+  }
+
+  // P0: Debounce mic start (absorb double taps within 250ms)
+  const now = Date.now();
+  if (now - lastStartAttempt < 250) {
+    diagLog('Mic click debounced (double tap)', 'info');
+    return;
+  }
+  lastStartAttempt = now;
+
+  // Reject if start/stop already in progress (avoid race)
+  if (startInProgress || stopInProgress) {
+    diagLog('Start/stop already in progress, ignoring', 'warn');
+    return;
+  }
+
+  // Wait while connecting
+  if (state === S.CONNECTING) {
+    diagLog('Connecting, please wait...', 'info');
+    return;
+  }
+
+  // START from READY: Start mic immediately (WebSocket already open)
+  if (state === S.READY && serverReadyGate) {
+    startInProgress = true;
+    sessionWanted = true;
+    haptic(20);
+    diagLog('Starting mic...', 'info');
+    startMic();
+    startInProgress = false;
+    return;
+  }
+
+  // RESTART from OFFLINE/IDLE: Reconnect first
+  if (state === S.IDLE || state === S.OFFLINE || state === S.FAILED) {
+    if (restartInProgress) {
+      diagLog('Restart already in progress', 'warn');
+      return;
+    }
+
+    restartInProgress = true;
+    sessionWanted = true;
+    wsWanted = true;
+    haptic(20);
+
+    // Show feedback message
+    $reconnMsg.textContent = 'Reconnecting...';
+    diagLog('Restarting connection...', 'info');
+
+    // Timeout: if no flow.ready within 3s, show retry
+    clearTimeout(restartTimeout);
+    restartTimeout = setTimeout(() => {
+      if (!serverReadyGate) {
+        diagLog('Restart timeout: no server response in 3s', 'err');
+        $reconnMsg.textContent = 'Connection timeout. Tap to retry.';
+        restartInProgress = false;
+      }
+    }, 3000);
+
+    forceReconnect();
+    return;
+  }
+
+  // Other states: log and wait
+  diagLog(`Cannot start from state: ${state}`, 'warn');
+}
+
+$micBtn.addEventListener('click', startSession);
+
+// keyboard: Space or Enter on mic button
+$micBtn.addEventListener('keydown', (e) => {
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); startSession(); }
+});
+
+// reconnect button
+$reconnBtn.addEventListener('click', () => {
+  wsWanted = true;
+  sessionWanted = true;
+  forceReconnect();
+});
+
+// audio toggle
+$audioBtn.addEventListener('click', () => {
+  audioOn = !audioOn;
+  $audioBtn.classList.toggle('on', audioOn);
+  $audioBtn.setAttribute('aria-pressed', audioOn);
+  haptic();
+});
+
+// diag toggle
+$diagBtn.addEventListener('click', () => {
+  diagOpen = !diagOpen;
+  $diag.classList.toggle('open', diagOpen);
+  $diagBtn.classList.toggle('on', diagOpen);
+  $diagBtn.setAttribute('aria-pressed', diagOpen);
+  haptic();
+});
+
+// manual OFF button - soft stop (pause session without closing WebSocket)
+const $offBtn = document.getElementById('offBtn');
+if ($offBtn) {
+  $offBtn.addEventListener('click', () => {
+    diagLog('OFF button: soft stop', 'info');
+    softStop();
+    haptic(30);
+  });
+}
+
+// autoscroll toggle
+$scrollToggle.addEventListener('click', () => {
+  autoScroll = !autoScroll;
+  $scrollCheck.textContent = autoScroll ? '\u2713' : '';
+  $scrollToggle.setAttribute('aria-pressed', autoScroll);
+});
+
+// ── cleanup on unload ─────────────────────────────────────
+window.addEventListener('beforeunload', () => {
+  sessionWanted = false;
+  wsWanted = false;
+  killMic(); killPlayback();
+  if (ws) { ws.close(1000, 'page unload'); ws = null; }
+});
+
+// ── visibility change: reduce reconnect aggressiveness ────
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && state === S.OFFLINE && wsWanted && !stopInProgress) {
+    forceReconnect();
+  }
+});
+
+// ── Wake Lock ─────────────────────────────────────────────
+let wakeLock = null;
+async function acquireWake() {
+  try {
+    if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+  } catch(e) {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && [S.LISTENING, S.TRANSLATING, S.SPEAKING].includes(state))
+    acquireWake();
+});
+
+// ── Lifecycle: Visibility (backgrounding/foregrounding) ────
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    // App came to foreground
+    diagLog('App foreground', 'ok');
+    if ((state === S.OFFLINE || state === S.FAILED) && !stopInProgress) {
+      if (wsWanted) {
+        reconnIdx = 0; // reset backoff on user return
+        forceReconnect();
+      }
+    }
+  } else {
+    // App backgrounded — make reconnects less aggressive
+    diagLog('App background', 'ok');
+  }
+});
+
+// ── Lifecycle: Online/Offline status ────
+window.addEventListener('online', () => {
+  diagLog('Network online', 'ok');
+  if (state === S.OFFLINE && wsWanted && !stopInProgress) {
+    reconnIdx = 0;
+    forceReconnect();
+  }
+});
+
+window.addEventListener('offline', () => {
+  diagLog('Network offline', 'err');
+  transition(S.OFFLINE);
+});
+
+// ── Service Worker ────────────────────────────────────────
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/static/sw.js').catch(()=>{});
+
+// ── Initial log ───────────────────────────────────────────
+diagLog('Flow client loaded');
+
+// ── Auto-connect WebSocket on load ───────────────────────
+// Connect immediately so user sees READY state; mic starts on user tap
+wsConnect();
+</script>
+
+<!-- VAD SETTINGS MODAL -->
+<div id="vadModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:1000;align-items:center;justify-content:center;">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;width:90%;max-width:400px;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <h2 style="margin:0;font-size:18px;color:var(--text);">Voice Activity Detection</h2>
+      <button id="vadClose" style="background:none;border:none;color:var(--text-2);cursor:pointer;font-size:24px;padding:0;">✕</button>
+    </div>
+
+    <!-- Sensitivity Slider -->
+    <div style="margin-bottom:20px;">
+      <label style="display:block;color:var(--text-2);font-size:12px;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">
+        Sensitivity: <span id="sensitivityValue" style="color:var(--accent);">50%</span>
+      </label>
+      <input type="range" id="sensitivitySlider" min="0" max="100" value="50"
+             style="width:100%;height:4px;background:var(--border);border-radius:2px;outline:none;-webkit-appearance:none;">
+      <div style="font-size:11px;color:var(--text-3);margin-top:4px;">
+        ← Less sensitive (ignore quiet)  |  More sensitive (pick up whisper) →
+      </div>
+    </div>
+
+    <!-- End-of-Speech Delay Slider -->
+    <div style="margin-bottom:20px;">
+      <label style="display:block;color:var(--text-2);font-size:12px;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">
+        End-of-Speech Delay: <span id="delayValue" style="color:var(--accent);">650ms</span>
+      </label>
+      <input type="range" id="delaySlider" min="300" max="2000" value="650" step="50"
+             style="width:100%;height:4px;background:var(--border);border-radius:2px;outline:none;-webkit-appearance:none;">
+      <div style="font-size:11px;color:var(--text-3);margin-top:4px;">
+        ← Quick finalize (interrupt hesitation)  |  Slow finalize (allow long pauses) →
+      </div>
+    </div>
+
+    <!-- Hold-to-Talk Mode -->
+    <div style="margin-bottom:20px;border-top:1px solid var(--border);padding-top:16px;">
+      <label style="display:flex;align-items:center;gap:8px;color:var(--text-2);font-size:12px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;">
+        <input type="checkbox" id="holdToTalkToggle" style="width:16px;height:16px;cursor:pointer;accent-color:var(--accent);">
+        Hold to Talk
+      </label>
+      <div style="font-size:11px;color:var(--text-3);margin-top:4px;">
+        When enabled, press and hold mic to speak. Release to finalize.
+      </div>
+    </div>
+
+    <!-- Language Settings -->
+    <div style="margin-bottom:20px;border-top:1px solid var(--border);padding-top:16px;">
+      <div style="margin-bottom:12px;">
+        <label style="display:block;color:var(--text-2);font-size:12px;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">
+          I speak:
+        </label>
+        <select id="sourceLanguage" style="width:100%;padding:8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:inherit;">
+          <option value="en">English</option>
+          <option value="pt">Português (Brasil)</option>
+        </select>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label style="display:block;color:var(--text-2);font-size:12px;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">
+          Translate to:
+        </label>
+        <select id="targetLanguage" style="width:100%;padding:8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:inherit;">
+          <option value="pt">Português (Brasil)</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+
+      <button id="swapLanguages" style="width:100%;padding:8px;background:rgba(224,168,70,0.15);border:1px solid var(--accent);color:var(--accent);border-radius:6px;font-weight:600;cursor:pointer;font-family:inherit;">
+        ↔ Swap Languages
+      </button>
+    </div>
+
+    <!-- Close Button -->
+    <button id="vadSave" style="width:100%;padding:12px;background:var(--accent);color:var(--bg);border:none;border-radius:6px;font-weight:600;cursor:pointer;">
+      Save & Close
+    </button>
+  </div>
+</div>
+
+<style>
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(224, 168, 70, 0.3);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 2px 8px rgba(224, 168, 70, 0.3);
+}
+</style>
+
+<script>
+// ─ VAD Settings UI ─
+const $vadModal = document.getElementById('vadModal');
+const $sensitivitySlider = document.getElementById('sensitivitySlider');
+const $delaySlider = document.getElementById('delaySlider');
+const $sensitivityValue = document.getElementById('sensitivityValue');
+const $delayValue = document.getElementById('delayValue');
+const $settingsBtn = document.getElementById('settingsBtn');
+const $vadClose = document.getElementById('vadClose');
+const $vadSave = document.getElementById('vadSave');
+
+// DEBUG: Log what we found
+console.log('VAD UI Elements:', {
+  settingsBtn: !!$settingsBtn,
+  vadModal: !!$vadModal,
+  sensitivitySlider: !!$sensitivitySlider,
+  delaySlider: !!$delaySlider,
+  vadClose: !!$vadClose,
+  vadSave: !!$vadSave
+});
+
+// Guard: only run if all elements exist
+if ($settingsBtn && $vadModal && $sensitivitySlider && $delaySlider) {
+  console.log('VAD Settings UI: Initializing event listeners...');
+  // Update slider display (define FIRST before calling)
+  function updateSliderDisplay() {
+    const sens = parseInt($sensitivitySlider.value);
+    const delay = parseInt($delaySlider.value);
+    $sensitivityValue.textContent = sens + '%';
+    $delayValue.textContent = delay + 'ms';
+  }
+
+  // Open settings
+  $settingsBtn.addEventListener('click', () => {
+    $sensitivitySlider.value = Math.round(vad.sensitivity * 100);
+    $delaySlider.value = vad.endDelayMs;
+    updateSliderDisplay();
+    $vadModal.style.display = 'flex';
+  });
+
+  // Close settings
+  const closeSettings = () => {
+    $vadModal.style.display = 'none';
+  };
+
+  $vadClose.addEventListener('click', closeSettings);
+  $vadSave.addEventListener('click', () => {
+    vad.sensitivity = parseInt($sensitivitySlider.value) / 100;
+    vad.endDelayMs = parseInt($delaySlider.value);
+    vad.save();
+    diagLog(`VAD: Sensitivity=${(vad.sensitivity*100).toFixed(0)}%, Delay=${vad.endDelayMs}ms`, 'ok');
+    closeSettings();
+  });
+
+  $sensitivitySlider.addEventListener('input', updateSliderDisplay);
+  $delaySlider.addEventListener('input', updateSliderDisplay);
+
+  // ──── HOLD-TO-TALK MODE ────
+  const $holdToTalkToggle = document.getElementById('holdToTalkToggle');
+  // Initialize from localStorage (holdToTalkMode and isHoldingMic are now top-level)
+  holdToTalkMode = localStorage.getItem('holdToTalkMode') === 'true';
+
+  if ($holdToTalkToggle) {
+    $holdToTalkToggle.checked = holdToTalkMode;
+
+    $holdToTalkToggle.addEventListener('change', (e) => {
+      holdToTalkMode = e.target.checked;
+      localStorage.setItem('holdToTalkMode', holdToTalkMode ? 'true' : 'false');
+      diagLog(`Hold-to-Talk: ${holdToTalkMode ? 'ON' : 'OFF'}`, 'info');
+    });
+
+    // Mouse events for desktop
+    const originalMouseDown = (e) => {
+      if (!holdToTalkMode) return;
+      isHoldingMic = true;
+      e.preventDefault();
+      if (state === S.READY || state === S.IDLE) startSession();
+    };
+
+    const originalMouseUp = (e) => {
+      if (!holdToTalkMode || !isHoldingMic) return;
+      isHoldingMic = false;
+      e.preventDefault();
+      if (state === S.LISTENING) {
+        killMic();
+        diagLog('Hold released, finalizing turn', 'info');
+      }
+    };
+
+    $micBtn.addEventListener('mousedown', originalMouseDown);
+    document.addEventListener('mouseup', originalMouseUp);
+
+    // Touch events for mobile
+    $micBtn.addEventListener('touchstart', (e) => {
+      if (!holdToTalkMode) return;
+      isHoldingMic = true;
+      if (state === S.READY || state === S.IDLE) startSession();
+    });
+
+    $micBtn.addEventListener('touchend', (e) => {
+      if (!holdToTalkMode || !isHoldingMic) return;
+      isHoldingMic = false;
+      if (state === S.LISTENING) {
+        killMic();
+        diagLog('Touch released, finalizing turn', 'info');
+      }
+    });
+  }
+
+  // ──── LANGUAGE SETTINGS ────
+  const $sourceLanguage = document.getElementById('sourceLanguage');
+  const $targetLanguage = document.getElementById('targetLanguage');
+  const $swapLanguages = document.getElementById('swapLanguages');
+
+  let sourceLanguage = localStorage.getItem('sourceLanguage') || 'en';
+  let targetLanguage = localStorage.getItem('targetLanguage') || 'pt';
+
+  // Load saved language preferences
+  if ($sourceLanguage) $sourceLanguage.value = sourceLanguage;
+  if ($targetLanguage) $targetLanguage.value = targetLanguage;
+
+  // Send language config to server
+  function sendLanguageToServer() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'language_config',
+        source_language: sourceLanguage,
+        target_language: targetLanguage
+      }));
+      diagLog(`Language config sent: ${sourceLanguage} → ${targetLanguage}`, 'ok');
+    }
+  }
+
+  // Update UI language display
+  function updateLanguageDisplay() {
+    const langNames = { 'en': 'English', 'pt': 'Português' };
+    const $langBar = document.querySelector('.lang-bar');
+    if ($langBar) {
+      $langBar.innerHTML = `<span class="lang-tag">${langNames[sourceLanguage] || 'English'}</span><span class="lang-arrow">&#8644;</span><span class="lang-tag">${langNames[targetLanguage] || 'Português'}</span>`;
+    }
+  }
+
+  if ($sourceLanguage) {
+    $sourceLanguage.addEventListener('change', (e) => {
+      sourceLanguage = e.target.value;
+      localStorage.setItem('sourceLanguage', sourceLanguage);
+      updateLanguageDisplay();
+      sendLanguageToServer();
+    });
+  }
+
+  if ($targetLanguage) {
+    $targetLanguage.addEventListener('change', (e) => {
+      targetLanguage = e.target.value;
+      localStorage.setItem('targetLanguage', targetLanguage);
+      updateLanguageDisplay();
+      sendLanguageToServer();
+    });
+  }
+
+  if ($swapLanguages) {
+    $swapLanguages.addEventListener('click', () => {
+      [sourceLanguage, targetLanguage] = [targetLanguage, sourceLanguage];
+      if ($sourceLanguage) $sourceLanguage.value = sourceLanguage;
+      if ($targetLanguage) $targetLanguage.value = targetLanguage;
+      localStorage.setItem('sourceLanguage', sourceLanguage);
+      localStorage.setItem('targetLanguage', targetLanguage);
+      updateLanguageDisplay();
+      sendLanguageToServer();
+      diagLog(`Languages swapped: ${sourceLanguage} ↔ ${targetLanguage}`, 'info');
+    });
+  }
+
+  // Update language display on init
+  updateLanguageDisplay();
+
+  // Close on backdrop click
+  $vadModal.addEventListener('click', (e) => {
+    if (e.target === $vadModal) closeSettings();
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// MODE B: TRANSCRIPT COLLAPSE + RMS INTENSITY
+// ══════════════════════════════════════════════════════════════
+
+(function modeB() {
+  const $transcriptWrap = document.querySelector('.transcript-wrap');
+  const $toolbar = document.querySelector('.transcript-toolbar');
+  const $transcript = document.getElementById('transcript');
+
+  if (!$transcriptWrap || !$toolbar) return;
+
+  // Initialize collapse state from localStorage
+  let isCollapsed = localStorage.getItem('transcriptCollapsed') === 'true';
+  $transcriptWrap.setAttribute('data-collapsed', isCollapsed);
+
+  // Replace "Transcript" label with History button
+  const $label = $toolbar.querySelector('span');
+  if ($label) {
+    const $historyBtn = document.createElement('button');
+    $historyBtn.id = 'historyToggle';
+    $historyBtn.className = 'history-toggle';
+    $historyBtn.innerHTML = '📜 History <span id="msgCount">(0)</span>';
+    $historyBtn.style.cssText = 'font-size:10px; color:var(--accent); cursor:pointer; background:none; border:none; font-family:var(--font); font-weight:600; letter-spacing:0.5px; padding:4px 8px; border-radius:4px; transition:all 0.2s;';
+
+    $historyBtn.addEventListener('mouseover', () => {
+      $historyBtn.style.background = 'rgba(224,168,70,0.1)';
+    });
+    $historyBtn.addEventListener('mouseout', () => {
+      $historyBtn.style.background = 'none';
+    });
+
+    $historyBtn.addEventListener('click', () => {
+      isCollapsed = !isCollapsed;
+      localStorage.setItem('transcriptCollapsed', isCollapsed);
+      $transcriptWrap.setAttribute('data-collapsed', isCollapsed);
+      haptic();
+    });
+
+    $label.replaceWith($historyBtn);
+  }
+
+  // Update message count
+  function updateMessageCount() {
+    const rows = $transcript.querySelectorAll('.t-row');
+    const count = rows.length;
+    const $count = document.getElementById('msgCount');
+    if ($count) $count.textContent = `(${count})`;
+  }
+
+  // Observer for new messages
+  const observer = new MutationObserver(updateMessageCount);
+  observer.observe($transcript, { childList: true });
+  updateMessageCount();
+
+  // RMS intensity: Feed peakLvl to CSS variable
+  // This creates the dynamic glow effect tied to voice energy
+  setInterval(() => {
+    const intensity = Math.min(peakLvl / 100, 1); // Normalize 0-1
+    document.documentElement.style.setProperty('--rms-intensity', intensity);
+  }, 50);
+
+  diagLog('MODE B UI initialized', 'info');
+})();
+
+</script>
+
+</body>
+</html>

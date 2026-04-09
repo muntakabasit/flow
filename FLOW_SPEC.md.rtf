@@ -1,0 +1,504 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2867
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fnil\fcharset0 HelveticaNeue;\f1\fnil\fcharset0 HelveticaNeue-Bold;\f2\fnil\fcharset0 .AppleSystemUIFontMonospaced-Regular;
+}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\deftab560
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f0\fs26 \cf0 \
+\uc0\u55357 \u56516 
+\f1\b  FLOW_SPEC.md (v1 \'97 High-Level System Contract)
+\f0\b0 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 1. 
+\f0\b0 \uc0\u55356 \u57263 
+\f1\b  Purpose
+\f0\b0 \
+\
+Flow is a 
+\f1\b real-time bilingual interpreter
+\f0\b0 .\
+\
+It must:\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	capture speech\
+	\'95	detect language\
+	\'95	translate\
+	\'95	return audio + text\
+	\'95	maintain a clean, predictable interaction loop\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Non-negotiable principle:
+\f0\b0 \
+\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 One press = one turn. No duplicates. No ghost turns. No crashes.\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 2. 
+\f0\b0 \uc0\u55358 \u56817 
+\f1\b  Canonical System Paths (SOURCE OF TRUTH)
+\f0\b0 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f2\fs24 \cf0 iOS App:\
+/Users/kulturestudios/BelawuOS/flow/FlowiOS/\
+\
+Server:\
+/Users/kulturestudios/BelawuOS/flow/server_local.py
+\fs26 \
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f0 \cf0 \
+\uc0\u10060  No duplicate FlowiOS trees allowed\
+\uc0\u10060  No editing outside these paths\
+\
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 3. 
+\f0\b0 \uc0\u55357 \u56580 
+\f1\b  Core Interaction Lifecycle (STRICT)
+\f0\b0 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f2\fs24 \cf0 READY\
+\uc0\u8595  (press)\
+LISTENING\
+\uc0\u8595  (release OR speech_stopped)\
+PROCESSING\
+\uc0\u8595  (translation_done)\
+READY
+\fs26 \
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f0 \cf0 \
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Rules
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	MUST be linear (no branching)\
+	\'95	MUST not skip states\
+	\'95	MUST not repeat states\
+	\'95	MUST always return to READY\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 4. 
+\f0\b0 \uc0\u55356 \u57241 \u65039 
+\f1\b  Input Behavior
+\f0\b0 \
+\
+
+\f1\b Press
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	starts audio capture immediately\
+	\'95	sends audio stream to server\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Release
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	triggers finalize IF server hasn\'92t already ended turn\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Server speech_stopped
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	ends capture immediately\
+	\'95	overrides release\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 HARD RULE:
+\f0\b0 \
+\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 Only ONE finalize per turn\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 5. 
+\f0\b0 \uc0\u55358 \u56800 
+\f1\b  Turn Definition
+\f0\b0 \
+\
+A valid turn must produce:\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	source transcript (non-empty OR valid silence classification)\
+	\'95	translation (text)\
+	\'95	optional TTS audio\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Invalid turn:
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	empty transcript\
+	\'95	duplicate finalize\
+	\'95	below_floor ghost turn\
+\
+\uc0\u8594  must NOT be emitted\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 6. 
+\f0\b0 \uc0\u55356 \u57104 
+\f1\b  WebSocket Contract
+\f0\b0 \
+\
+
+\f1\b Client \uc0\u8594  Server
+\f0\b0 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f2\fs24 \cf0 \{ "type": "audio_chunk", "data": "<base64>" \}\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f0 \cf0 \{ "type": "end_of_utterance" \}
+\fs26 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Server \uc0\u8594  Client
+\f0\b0 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f2\fs24 \cf0 \{ "type": "speech_started" \}\
+\{ "type": "speech_stopped" \}\
+\{ "type": "transcript", ... \}\
+\{ "type": "translation", ... \}\
+\{ "type": "translation_done" \}\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f0 \cf0 \{ "type": "tts_audio", ... \}
+\fs26 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 HARD RULES
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	No messages after socket close\
+	\'95	No duplicate translation_done\
+	\'95	No send after finalize\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 7. 
+\f0\b0 \uc0\u9888 \u65039 
+\f1\b  Disconnect Handling (CRITICAL)
+\f0\b0 \
+\
+
+\f1\b Client disconnect:
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	server must stop immediately\
+	\'95	no exception should crash server\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Server disconnect:
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	client must:\
+	\'95	reset to READY\
+	\'95	not crash\
+	\'95	allow next press\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 8. 
+\f0\b0 \uc0\u55357 \u56586 
+\f1\b  Audio Contract
+\f0\b0 \
+\
+
+\f1\b Input
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	PCM \uc0\u8594  base64 JSON\
+	\'95	consistent sample rate (defined in server)\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Output
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	streaming audio chunks allowed\
+	\'95	must not crash if missing\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 9. 
+\f0\b0 \uc0\u55358 \u56800 
+\f1\b  VAD / Turn Ending Rules
+\f0\b0 \
+\
+
+\f1\b Turn ends when:
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	silence threshold reached (server)\
+	\'95	OR user releases\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 HARD RULE:
+\f0\b0 \
+\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 Forced end must NOT create a second turn\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 10. 
+\f0\b0 \uc0\u55357 \u57003 
+\f1\b  Forbidden Behaviors
+\f0\b0 \
+\
+These are 
+\f1\b fail conditions
+\f0\b0 :\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	\uc0\u10060  double finalize\
+	\'95	\uc0\u10060  ghost second turn\
+	\'95	\uc0\u10060  server crash on disconnect\
+	\'95	\uc0\u10060  client crash on disconnect\
+	\'95	\uc0\u10060  state stuck (not returning to READY)\
+	\'95	\uc0\u10060  UI showing processing with no result\
+	\'95	\uc0\u10060  send() after websocket closed\
+	\'95	\uc0\u10060  multiple translation_done events\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 11. 
+\f0\b0 \uc0\u55358 \u56810 
+\f1\b  Required Test Cases (MANDATORY)
+\f0\b0 \
+\
+Every change must pass ALL:\
+\
+
+\f1\b Test 1 \'97 Short Turn
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	speak 1\'962 seconds\
+	\'95	expect:\
+	\'95	correct transcript\
+	\'95	translation\
+	\'95	return to READY\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Test 2 \'97 Long Turn (VAD)
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	speak until auto stop (~15s)\
+	\'95	expect:\
+	\'95	exactly ONE translation\
+	\'95	no ghost turn\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Test 3 \'97 Manual Release
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	press \uc0\u8594  speak \u8594  release early\
+	\'95	expect:\
+	\'95	one clean turn\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Test 4 \'97 Disconnect Mid-Turn
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	press \uc0\u8594  speak \u8594  kill app\
+	\'95	expect:\
+	\'95	server does NOT crash\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Test 5 \'97 Rapid Re-press
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	press \uc0\u8594  release \u8594  press quickly again\
+	\'95	expect:\
+	\'95	no state corruption\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 12. 
+\f0\b0 \uc0\u55358 \u56809 
+\f1\b  State Ownership
+\f0\b0 \
+\
+
+\f1\b Source of truth:
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	server controls turn boundaries\
+	\'95	client reflects state\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Client must NOT:
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	invent state transitions\
+	\'95	use timers for turn logic\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 13. 
+\f0\b0 \uc0\u55358 \u56815 
+\f1\b  Error Handling Rules
+\f0\b0 \
+\
+
+\f1\b Server:
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	ALL send() must be guarded\
+	\'95	disconnect = normal exit, not exception\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 Client:
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	must never crash on:\
+	\'95	missing audio\
+	\'95	missing events\
+	\'95	late events\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 14. 
+\f0\b0 \uc0\u55358 \u56800 
+\f1\b  Development Protocol
+\f0\b0 \
+\
+
+\f1\b Before any change:
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	identify which rule is being fixed\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 After change:
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	run all 5 tests\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 If ANY fail:
+\f0\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	revert or fix before continuing\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b \cf0 15. 
+\f0\b0 \uc0\u55357 \u56594 
+\f1\b  Golden Rule
+\f0\b0 \
+\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 Stability > Features\
+\
+No new features until:\
+	\'95	all tests pass consistently\
+	\'95	no crashes\
+	\'95	no duplicate turns\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+\
+\uc0\u55358 \u56800 
+\f1\b  What this gives you
+\f0\b0 \
+\
+This turns your system into:\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 	\'95	deterministic\
+	\'95	debuggable\
+	\'95	scalable\
+	\'95	not dependent on your memory\
+\
+You are no longer guessing.\
+\
+You are enforcing.\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\uc0\u11835 \
+}

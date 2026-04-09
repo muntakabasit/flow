@@ -1,0 +1,16 @@
+[flow-local] Loading Whisper model...
+[flow-local] Whisper 'small' loaded
+[flow-local] Loading Piper voices...
+[flow-local] Piper voices loaded (EN=22050Hz, PT=22050Hz)
+[flow-local] Loading Silero VAD...
+[flow-local] Silero VAD at: /opt/homebrew/lib/python3.14/site-packages/faster_whisper/assets/silero_vad_v6.onnx
+
+  ╔══════════════════════════════════════╗
+  ║   FLOW LOCAL — Bilingual Interpreter ║
+  ║   English ↔ Brazilian Portuguese      ║
+  ║   100% LOCAL — No cloud calls         ║
+  ║   http://localhost:8765               ║
+  ╚══════════════════════════════════════╝
+
+[flow-local] Warming up Ollama (gemma3:4b)...
+[flow-local] Ollama warm: 'The most common translation of'

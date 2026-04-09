@@ -1,0 +1,962 @@
+[
+  {
+    "clip_id": "en_accent_01_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "I think this will work.",
+    "spoken_text": "I think this will work.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_01_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "I think this will work.",
+    "spoken_text": "I tink dis will work.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_01_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "I think this will work.",
+    "spoken_text": "I think this will work.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_01_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "I think this will work.",
+    "spoken_text": "I think this will work.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_01_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "I think this will work.",
+    "spoken_text": "I think this will work.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_01_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "I think this will work.",
+    "spoken_text": "I tink dis will work.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_02_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "Do you know where the station is?",
+    "spoken_text": "Do you know where the station is?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_02_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "Do you know where the station is?",
+    "spoken_text": "Do you know where de station is?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_02_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "Do you know where the station is?",
+    "spoken_text": "Do you know where the station is?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_02_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "Do you know where the station is?",
+    "spoken_text": "Do you know where the station is?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_02_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "Do you know where the station is?",
+    "spoken_text": "Do you know where the station is?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_02_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "Do you know where the station is?",
+    "spoken_text": "Do you know where de station is?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_03_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "Please tell them I will come tomorrow.",
+    "spoken_text": "Please tell them I will come tomorrow.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_03_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "Please tell them I will come tomorrow.",
+    "spoken_text": "Please tell dem I will come tomorrow.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_03_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "Please tell them I will come tomorrow.",
+    "spoken_text": "Please tell them I will come tomorrow.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_03_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "Please tell them I will come tomorrow.",
+    "spoken_text": "Please tell them I will come tomorrow.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_03_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "Please tell them I will come tomorrow.",
+    "spoken_text": "Please tell them I'll come tomorrow.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_03_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "Please tell them I will come tomorrow.",
+    "spoken_text": "Please tell dem I'll come tomorrow.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_04_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "Can you help me with this problem?",
+    "spoken_text": "Can you help me with this problem?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_04_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "Can you help me with this problem?",
+    "spoken_text": "Can you help me wit dis problem?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_04_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "Can you help me with this problem?",
+    "spoken_text": "Can you help me with this problem?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_04_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "Can you help me with this problem?",
+    "spoken_text": "Can you help me with this problem?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_04_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "Can you help me with this problem?",
+    "spoken_text": "Can you help me with this problem?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_04_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "Can you help me with this problem?",
+    "spoken_text": "Can you help me wit dis problem?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_05_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "I need to go to the hospital today.",
+    "spoken_text": "I need to go to the hospital today.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_05_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "I need to go to the hospital today.",
+    "spoken_text": "I need to go to de hospital today.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_05_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "I need to go to the hospital today.",
+    "spoken_text": "I need to go to the hospital today.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_05_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "I need to go to the hospital today.",
+    "spoken_text": "I need to go to the hospital today.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_05_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "I need to go to the hospital today.",
+    "spoken_text": "I need to go to the hospital today.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_05_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "I need to go to the hospital today.",
+    "spoken_text": "I need to go to de hospital today.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_06_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "What are you doing there?",
+    "spoken_text": "What are you doing there?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_06_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "What are you doing there?",
+    "spoken_text": "What are you doing dere?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_06_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "What are you doing there?",
+    "spoken_text": "What are you doing there?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_06_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "What are you doing there?",
+    "spoken_text": "What are you doing there?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_06_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "What are you doing there?",
+    "spoken_text": "What are you doing there?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_06_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "What are you doing there?",
+    "spoken_text": "What are you doing dere?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_07_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "I will call them later.",
+    "spoken_text": "I will call them later.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_07_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "I will call them later.",
+    "spoken_text": "I will call dem later.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_07_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "I will call them later.",
+    "spoken_text": "I will call them later.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_07_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "I will call them later.",
+    "spoken_text": "I will call them later.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_07_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "I will call them later.",
+    "spoken_text": "I'll call them later.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_07_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "I will call them later.",
+    "spoken_text": "I'll call dem later.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_08_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "Where did you put the money?",
+    "spoken_text": "Where did you put the money?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_08_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "Where did you put the money?",
+    "spoken_text": "Where did you put de money?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_08_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "Where did you put the money?",
+    "spoken_text": "Where did you put the money?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_08_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "Where did you put the money?",
+    "spoken_text": "Where did you put the money?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_08_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "Where did you put the money?",
+    "spoken_text": "Where did you put the money?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_08_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "Where did you put the money?",
+    "spoken_text": "Where did you put de money?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_09_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "Do you want to go with me?",
+    "spoken_text": "Do you want to go with me?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_09_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "Do you want to go with me?",
+    "spoken_text": "Do you want to go wit me?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_09_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "Do you want to go with me?",
+    "spoken_text": "Do you want to go with me?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_09_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "Do you want to go with me?",
+    "spoken_text": "Do you want to go with me?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_09_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "Do you want to go with me?",
+    "spoken_text": "Do you wanna go with me?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_09_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "Do you want to go with me?",
+    "spoken_text": "Do you wanna go wit me?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_10_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "Please tell the driver to stop.",
+    "spoken_text": "Please tell the driver to stop.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_10_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "Please tell the driver to stop.",
+    "spoken_text": "Please tell de driver to stop.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_10_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "Please tell the driver to stop.",
+    "spoken_text": "Please tell the driver to stop.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_10_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "Please tell the driver to stop.",
+    "spoken_text": "Please tell the driver to stop.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_10_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "Please tell the driver to stop.",
+    "spoken_text": "Please tell the driver to stop.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_10_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "Please tell the driver to stop.",
+    "spoken_text": "Please tell de driver to stop.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_11_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "I am trying to figure out how this works.",
+    "spoken_text": "I am trying to figure out how this works.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_11_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "I am trying to figure out how this works.",
+    "spoken_text": "I am trying to figure out how dis works.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_11_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "I am trying to figure out how this works.",
+    "spoken_text": "I am trying to figure out how this works.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_11_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "I am trying to figure out how this works.",
+    "spoken_text": "I am trying to figure out how this works.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_11_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "I am trying to figure out how this works.",
+    "spoken_text": "I'm trying to figure out how this works.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_11_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "I am trying to figure out how this works.",
+    "spoken_text": "I'm trying to figure out how dis works.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_12_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "Have you had anything to eat today?",
+    "spoken_text": "Have you had anything to eat today?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_12_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "Have you had anything to eat today?",
+    "spoken_text": "Have you had anything to eat today?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_12_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "Have you had anything to eat today?",
+    "spoken_text": "Have you had anything to eat today?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_12_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "Have you had anything to eat today?",
+    "spoken_text": "Have you had anything to eat today?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_12_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "Have you had anything to eat today?",
+    "spoken_text": "Have you had anything to eat today?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_12_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "Have you had anything to eat today?",
+    "spoken_text": "Have you had anything to eat today?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_13_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "What have you been doing this week?",
+    "spoken_text": "What have you been doing this week?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_13_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "What have you been doing this week?",
+    "spoken_text": "What have you been doing dis week?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_13_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "What have you been doing this week?",
+    "spoken_text": "What have you been doing this week?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_13_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "What have you been doing this week?",
+    "spoken_text": "What have you bean doing this week?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_13_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "What have you been doing this week?",
+    "spoken_text": "What have you been doing this week?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_13_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "What have you been doing this week?",
+    "spoken_text": "What have you been doing dis week?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_14_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "Please, I really need your help.",
+    "spoken_text": "Please, I really need your help.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_14_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "Please, I really need your help.",
+    "spoken_text": "Please, I really need your help.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_14_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "Please, I really need your help.",
+    "spoken_text": "Please, I really need your help.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_14_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "Please, I really need your help.",
+    "spoken_text": "Please, I really need your help.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_14_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "Please, I really need your help.",
+    "spoken_text": "Please, I really need your help.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_14_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "Please, I really need your help.",
+    "spoken_text": "Please, I really need your help.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_15_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "I cannot come to work today.",
+    "spoken_text": "I cannot come to work today.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_15_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "I cannot come to work today.",
+    "spoken_text": "I cannot come to work today.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_15_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "I cannot come to work today.",
+    "spoken_text": "I cannot come to work today.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_15_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "I cannot come to work today.",
+    "spoken_text": "I cannot come to work today.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_15_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "I cannot come to work today.",
+    "spoken_text": "I can't come to work today.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_15_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "I cannot come to work today.",
+    "spoken_text": "I can't come to work today.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_16_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "How much does this cost?",
+    "spoken_text": "How much does this cost?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_16_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "How much does this cost?",
+    "spoken_text": "How much does dis cost?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_16_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "How much does this cost?",
+    "spoken_text": "How much does this cost?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_16_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "How much does this cost?",
+    "spoken_text": "How much does this cost?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_16_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "How much does this cost?",
+    "spoken_text": "How much does this cost?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_16_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "How much does this cost?",
+    "spoken_text": "How much does dis cost?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_17_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "Can you speak a little slower?",
+    "spoken_text": "Can you speak a little slower?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_17_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "Can you speak a little slower?",
+    "spoken_text": "Can you speak a little slower?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_17_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "Can you speak a little slower?",
+    "spoken_text": "Can you speak a little slower?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_17_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "Can you speak a little slower?",
+    "spoken_text": "Can you speak a little slower?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_17_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "Can you speak a little slower?",
+    "spoken_text": "Can you speak a little slower?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_17_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "Can you speak a little slower?",
+    "spoken_text": "Can you speak a little slower?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_18_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "I haven't eaten anything yet.",
+    "spoken_text": "I haven't eaten anything yet.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_18_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "I haven't eaten anything yet.",
+    "spoken_text": "I haven't eaten anything yet.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_18_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "I haven't eaten anything yet.",
+    "spoken_text": "I haven't eaten anything yet.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_18_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "I haven't eaten anything yet.",
+    "spoken_text": "I haven't eaten anything yet.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_18_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "I haven't eaten anything yet.",
+    "spoken_text": "I haven't eaten anything yet.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_18_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "I haven't eaten anything yet.",
+    "spoken_text": "I haven't eaten anything yet.",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_19_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "Do you know where the hospital is?",
+    "spoken_text": "Do you know where the hospital is?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_19_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "Do you know where the hospital is?",
+    "spoken_text": "Do you know where de hospital is?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_19_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "Do you know where the hospital is?",
+    "spoken_text": "Do you know where the hospital is?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_19_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "Do you know where the hospital is?",
+    "spoken_text": "Do you know where the hospital is?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_19_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "Do you know where the hospital is?",
+    "spoken_text": "Do you know where the hospital is?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_19_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "Do you know where the hospital is?",
+    "spoken_text": "Do you know where de hospital is?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_20_base",
+    "family": "english_accent_stress",
+    "variant": "base",
+    "expected_text": "Where are you going today?",
+    "spoken_text": "Where are you going today?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_20_th_stopping",
+    "family": "english_accent_stress",
+    "variant": "th_stopping",
+    "expected_text": "Where are you going today?",
+    "spoken_text": "Where are you going today?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_20_cluster_reduction",
+    "family": "english_accent_stress",
+    "variant": "cluster_reduction",
+    "expected_text": "Where are you going today?",
+    "spoken_text": "Where are you going today?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_20_vowel_shift",
+    "family": "english_accent_stress",
+    "variant": "vowel_shift",
+    "expected_text": "Where are you going today?",
+    "spoken_text": "Where are you going today?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_20_casual_global_english",
+    "family": "english_accent_stress",
+    "variant": "casual_global_english",
+    "expected_text": "Where are you going today?",
+    "spoken_text": "Where are you gonnaday?",
+    "notes": ""
+  },
+  {
+    "clip_id": "en_accent_20_combined_light",
+    "family": "english_accent_stress",
+    "variant": "combined_light",
+    "expected_text": "Where are you going today?",
+    "spoken_text": "Where are you gonnaday?",
+    "notes": ""
+  }
+]

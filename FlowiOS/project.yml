@@ -1,0 +1,27 @@
+name: FlowiOS
+options:
+  bundleIdPrefix: com.flow
+  deploymentTarget:
+    iOS: '16.0'
+targets:
+  FlowiOS:
+    type: application
+    platform: iOS
+    sources: [FlowiOS]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.flow.FlowiOS
+        DEVELOPMENT_TEAM: ""
+        INFOPLIST_KEY_UILaunchScreen_Generate: YES
+        INFOPLIST_KEY_UIUserInterfaceStyle: Light
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: ""
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: ""
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Flow needs microphone access to interpret speech."
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: FlowiOS/Info.plist
+      properties:
+        CFBundleDisplayName: Flow
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true

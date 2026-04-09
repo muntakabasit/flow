@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>WebSocket Test</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #111; color: #0f0; }
+    .log { margin: 10px 0; padding: 5px; border: 1px solid #0f0; }
+    .error { color: #f00; }
+    .ok { color: #0f0; }
+  </style>
+</head>
+<body>
+<h1>WebSocket Connection Test</h1>
+<div id="log"></div>
+
+<script>
+const logDiv = document.getElementById('log');
+
+function log(msg, type = 'ok') {
+  const el = document.createElement('div');
+  el.className = 'log ' + type;
+  el.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+  logDiv.appendChild(el);
+  console.log(msg);
+}
+
+log('Page loaded, attempting WebSocket connection...', 'ok');
+
+try {
+  const ws = new WebSocket('ws://localhost:8765/ws');
+
+  ws.onopen = () => {
+    log('✅ WebSocket connected!', 'ok');
+  };
+
+  ws.onerror = (err) => {
+    log('❌ WebSocket error: ' + err.message, 'error');
+  };
+
+  ws.onclose = (ev) => {
+    log('⚠️  WebSocket closed: code=' + ev.code + ' reason=' + ev.reason, 'error');
+  };
+
+  // Try to send a test message after 2 seconds
+  setTimeout(() => {
+    if (ws.readyState === WebSocket.OPEN) {
+      log('Sending test message...', 'ok');
+      ws.send(JSON.stringify({ type: 'test', message: 'hello from test page' }));
+    } else {
+      log('WebSocket not open, state: ' + ws.readyState, 'error');
+    }
+  }, 2000);
+
+} catch (e) {
+  log('❌ Exception: ' + e.message, 'error');
+}
+
+// Also check localStorage
+log('localStorage available: ' + (typeof localStorage !== 'undefined'), 'ok');
+
+// Check for any global errors
+window.onerror = (msg, url, line, col, err) => {
+  log('❌ Global error: ' + msg, 'error');
+};
+
+</script>
+</body>
+</html>

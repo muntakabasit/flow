@@ -1,0 +1,296 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fnil\fcharset0 .SFNS-Regular;\f1\fnil\fcharset0 HelveticaNeue-Bold;\f2\fnil\fcharset0 .AppleSystemUIFontMonospaced-Regular;
+\f3\fnil\fcharset0 .SFNS-Semibold;\f4\froman\fcharset0 TimesNewRomanPSMT;\f5\fswiss\fcharset0 Helvetica;
+}
+{\colortbl;\red255\green255\blue255;\red14\green14\blue14;}
+{\*\expandedcolortbl;;\cssrgb\c6700\c6700\c6700;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f0\fs28 \cf2 You are working on 
+\f1\b Flow
+\f0\b0 , a mobile-first bilingual interpreter app.\
+\
+Primary file:\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f2 \cf2 /Users/kulturestudios/BelawuOS/flow/static/index.html
+\f0 \
+\
+Mission:\
+Make small, safe, reversible improvements without breaking the working interpreter flow.\
+\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f3\b\fs34 \cf2 Non-negotiable rules
+\f0\b0\fs28 \
+\pard\tqr\tx440\tx600\li600\fi-600\sl324\slmult1\sb240\partightenfactor0
+
+\f4 \cf2 	1.	
+\f1\b Preserve functionality first
+\f0\b0 \
+\pard\tqr\tx500\tx660\li660\fi-660\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	Do not break microphone capture.\
+	\'95	Do not break press/hold behavior.\
+	\'95	Do not break WebSocket connection flow.\
+	\'95	Do not break VAD, STT, translation, TTS, or turn completion.\
+	\'95	Do not break desktop behavior while fixing mobile.\
+\pard\tqr\tx440\tx600\li600\fi-600\sl324\slmult1\sb240\partightenfactor0
+
+\f4 \cf2 	2.	
+\f1\b Keep identifiers stable
+\f0\b0 \
+\pard\tqr\tx500\tx660\li660\fi-660\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	Do not rename or remove existing IDs.\
+	\'95	Do not rename or remove existing data-attributes.\
+	\'95	Do not rename JS functions unless explicitly requested.\
+	\'95	Assume existing IDs are wired to runtime behavior.\
+\pard\tqr\tx440\tx600\li600\fi-600\sl324\slmult1\sb240\partightenfactor0
+
+\f4 \cf2 	3.	
+\f1\b Smallest patch possible
+\f0\b0 \
+\pard\tqr\tx500\tx660\li660\fi-660\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	Fix only the issue requested.\
+	\'95	Do not redesign unrelated parts.\
+	\'95	Do not refactor large sections unless explicitly asked.\
+	\'95	Prefer tiny CSS or JS patches over structural rewrites.\
+\pard\tqr\tx440\tx600\li600\fi-600\sl324\slmult1\sb240\partightenfactor0
+
+\f4 \cf2 	4.	
+\f1\b One phase at a time
+\f0\b0 \
+\pard\tqr\tx500\tx660\li660\fi-660\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	If the request includes multiple phases, only execute the current phase.\
+	\'95	Do not continue to later phases automatically.\
+	\'95	Wait until the current phase is confirmed working.\
+\pard\tqr\tx440\tx600\li600\fi-600\sl324\slmult1\sb240\partightenfactor0
+
+\f4 \cf2 	5.	
+\f1\b Do not \'93inspect everything\'94 by default
+\f0\b0 \
+\pard\tqr\tx500\tx660\li660\fi-660\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	Only inspect the minimum code needed for the requested fix.\
+	\'95	Do not generate long architecture summaries unless explicitly asked.\
+	\'95	Do not waste tokens on full-file analysis if a focused patch is enough.\
+\pard\tqr\tx440\tx600\li600\fi-600\sl324\slmult1\sb240\partightenfactor0
+
+\f4 \cf2 	6.	
+\f1\b Behavior changes require caution
+\f0\b0 \
+\pard\tqr\tx500\tx660\li660\fi-660\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	Before changing microphone, hold/release logic, VAD timing, or state transitions:\
+\pard\tqr\tx900\tx1060\li1060\fi-1060\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	explain the minimum-risk patch in 
+\f1\b 3 bullets max
+\f0\b0 \
+	\'95	then apply only that patch\
+\pard\tqr\tx440\tx600\li600\fi-600\sl324\slmult1\sb240\partightenfactor0
+
+\f4 \cf2 	7.	
+\f1\b UI work must preserve Flow identity
+\f0\b0 \
+\pard\tqr\tx500\tx660\li660\fi-660\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	Keep the Virgil visual language once present:\
+\pard\tqr\tx900\tx1060\li1060\fi-1060\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	gold spine\
+	\'95	black / warm paper palette\
+	\'95	Adinkra orb\
+	\'95	translation-first layout\
+	\'95	localization-ready labels\
+\pard\tqr\tx500\tx660\li660\fi-660\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	Do not revert the UI back to older minimal theme unless explicitly asked.\
+\pard\tqr\tx440\tx600\li600\fi-600\sl324\slmult1\sb240\partightenfactor0
+
+\f4 \cf2 	8.	
+\f1\b Desktop and mobile rules
+\f0\b0 \
+\pard\tqr\tx500\tx660\li660\fi-660\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	Desktop is the stability baseline.\
+	\'95	Mobile changes must not damage desktop layout.\
+	\'95	On mobile, prefer:\
+\pard\tqr\tx900\tx1060\li1060\fi-1060\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	translation panel as main readable area\
+	\'95	compact orb/instruction area\
+	\'95	minimal scrolling outside the translation panel\
+\pard\tqr\tx440\tx600\li600\fi-600\sl324\slmult1\sb240\partightenfactor0
+
+\f4 \cf2 	9.	
+\f1\b No hidden scope expansion
+\f0\b0 \
+\pard\tqr\tx500\tx660\li660\fi-660\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	Do not add new systems, files, frameworks, or architecture unless explicitly requested.\
+	\'95	Do not introduce broad rewrites when fixing a narrow bug.\
+\pard\tqr\tx440\tx600\li600\fi-600\sl324\slmult1\sb240\partightenfactor0
+
+\f4 \cf2 	10.	
+\f1\b Output format
+\f0\b0 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\li600\sl324\slmult1\pardirnatural\partightenfactor0
+\cf2 After making changes, return only:\
+\
+\pard\tqr\tx100\tx260\li260\fi-260\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	what changed\
+	\'95	exact diff\
+	\'95	one short manual test\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f5\fs24 \cf0 \
+\uc0\u11835 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f0\fs28 \cf2 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f3\b\fs34 \cf2 Project priorities
+\f0\b0\fs28 \
+\
+Priority order:\
+\pard\tqr\tx260\tx420\li420\fi-420\sl324\slmult1\sb240\partightenfactor0
+
+\f4 \cf2 	1.	Working interpreter pipeline\
+	2.	Mobile reliability\
+	3.	Desktop stability\
+	4.	Visual consistency\
+	5.	Localization polish\
+	6.	Nice-to-have cleanup\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f5\fs24 \cf0 \
+\uc0\u11835 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f0\fs28 \cf2 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f3\b\fs34 \cf2 Known sensitive areas
+\f0\b0\fs28 \
+\
+Treat these as fragile:\
+\pard\tqr\tx100\tx260\li260\fi-260\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	microphone permission flow on iPhone / Safari\
+	\'95	hold-to-talk release timing\
+	\'95	VAD stop timing\
+	\'95	turn completion after speech ends\
+	\'95	dynamic DOM nodes tied to existing IDs\
+	\'95	translation turn rendering\
+	\'95	state labels and orb state transitions\
+\
+If touching one of these, make the smallest possible change.\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f5\fs24 \cf0 \
+\uc0\u11835 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f0\fs28 \cf2 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f3\b\fs34 \cf2 Default workflow
+\f0\b0\fs28 \
+\
+When asked to work:\
+\pard\tqr\tx260\tx420\li420\fi-420\sl324\slmult1\sb240\partightenfactor0
+
+\f4 \cf2 	1.	Identify the exact bug or visual issue\
+	2.	Inspect only the relevant section\
+	3.	Patch only that section\
+	4.	Preserve all unrelated behavior\
+	5.	Return diff only + one test\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f5\fs24 \cf0 \
+\uc0\u11835 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f0\fs28 \cf2 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f3\b\fs34 \cf2 If the request is too broad
+\f0\b0\fs28 \
+\
+If the request would require a large rewrite, do 
+\f1\b not
+\f0\b0  perform it all at once.\
+Instead, break it into:\
+\pard\tqr\tx100\tx260\li260\fi-260\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	Phase 1: smallest safe patch\
+	\'95	Phase 2: next isolated patch\
+	\'95	Phase 3: polish\
+\
+Then execute 
+\f1\b only Phase 1
+\f0\b0  unless explicitly told to continue.\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f5\fs24 \cf0 \
+\uc0\u11835 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f0\fs28 \cf2 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f3\b\fs34 \cf2 Example behavior
+\f0\b0\fs28 \
+\
+Good:\
+\pard\tqr\tx100\tx260\li260\fi-260\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	fix mobile hold-release timing only\
+	\'95	adjust orb spacing only\
+	\'95	restore Virgil trust bar without touching JS\
+	\'95	add localization labels without touching audio pipeline\
+\
+Bad:\
+	\'95	rewrite the whole file\
+	\'95	redesign layout while fixing VAD\
+	\'95	rename IDs to cleaner names\
+	\'95	refactor state machine during a visual patch\
+	\'95	inspect the whole app every time\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f5\fs24 \cf0 \
+\uc0\u11835 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f0\fs28 \cf2 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f3\b\fs34 \cf2 Golden rule
+\f0\b0\fs28 \
+\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f1\b \cf2 Patch small, test fast, never break the interpreter.
+\f0\b0 \
+:::\
+\
+And here\'92s the shorter companion prompt you can paste before any actual task:\
+\
+:::writing\{id=\'9358247\'94 variant=\'93standard\'94\}\
+Use the FLOW Agent Operating Contract.\
+\
+Task:\
+Fix only this issue in 
+\f2 /Users/kulturestudios/BelawuOS/flow/static/index.html
+\f0 .\
+\
+Rules:\
+\pard\tqr\tx100\tx260\li260\fi-260\sl324\slmult1\sb240\partightenfactor0
+\cf2 	\'95	smallest possible patch only\
+	\'95	preserve all IDs and existing wiring\
+	\'95	do not re-plan\
+	\'95	do not redesign unrelated sections\
+	\'95	do not touch WebSocket/VAD/audio/state machine unless required\
+	\'95	if touching hold-to-talk, mic permission, or VAD timing, explain minimum-risk patch in 3 bullets first\
+\
+After editing, output only:\
+\pard\tqr\tx260\tx420\li420\fi-420\sl324\slmult1\sb240\partightenfactor0
+
+\f4 \cf2 	1.	what changed\
+	2.	exact diff\
+	3.	one short manual test\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\li420\sl324\slmult1\pardirnatural\partightenfactor0
+\cf2 :::\
+
+\f0 t:\
+}
