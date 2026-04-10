@@ -1945,6 +1945,12 @@ async def websocket_handler(client_ws: WebSocket):
     # Gives the LLM a pronoun/topic anchor across turns — no full memory.
     conv_ctx = ConversationContext()
 
+    # REPEAT_LAST_OUTPUT_V1 — last successful turn cache.
+    # Stores the minimum data needed to replay translated output on demand.
+    # Updated on same eligibility gate as conv_ctx (Lane A/B, conf ≥ 0.60).
+    # NEVER stores raw STT. NEVER stores more than one turn.
+    last_output: dict | None = None   # {"text", "target_lang", "source_text", "direction"}
+
     # Phase 1 accent hardening — unique ID for this WS session (used in failure log)
     import uuid as _uuid
     session_id = _uuid.uuid4().hex[:8]
@@ -2081,6 +2087,54 @@ async def websocket_handler(client_ws: WebSocket):
 
             if msg_type == "pong":
                 # client responded to our ping, no action needed
+                continue
+
+            # REPEAT_LAST_OUTPUT_V1 — replay last clean translated output.
+            # Client sends {"type": "repeat"} only when state == .ready.
+            # Server regenerates TTS from cached text — no stored audio bytes.
+            # Uses new message type "repeat_done" so iOS does NOT commit a
+            # duplicate turn to history; echo suppression (is_playing_tts) applies.
+            if msg_type == "repeat":
+                if not last_output:
+                    log("[flow-local] [repeat] requested but no output cached yet")
+                    await safe_send(client_ws, {
+                        "type": "repeat_done",
+                        "skip_reason": "no_repeat_available",
+                    })
+                    continue
+
+                _rep_text    = last_output["text"]
+                _rep_lang    = last_output["target_lang"]
+                _rep_dir     = last_output["direction"]
+                _rep_src     = last_output["source_text"]
+                log(f"[flow-local] [repeat] replaying: dir={_rep_dir} text='{_rep_text[:60]}'")
+
+                await safe_send(client_ws, {"type": "tts_start"})
+                is_playing_tts = True
+                barge_in_event.clear()
+
+                try:
+                    _rep_audio = await loop.run_in_executor(
+                        EXECUTOR, synthesize_audio, _rep_text, _rep_lang,
+                    )
+                    if _rep_audio is not None and len(_rep_audio) > 0:
+                        _chunk_size = 2048
+                        for _i in range(0, len(_rep_audio), _chunk_size):
+                            _chunk = _rep_audio[_i : _i + _chunk_size]
+                            _b64   = float32_to_pcm16_b64(_chunk)
+                            if not await safe_send(client_ws, {"type": "audio_delta", "audio": _b64}):
+                                break  # client gone
+                    else:
+                        log("[flow-local] [repeat] TTS produced no audio")
+                except Exception as _rep_err:
+                    log(f"[flow-local] [repeat] TTS error: {_rep_err}")
+
+                await safe_send(client_ws, {
+                    "type":        "repeat_done",
+                    "text":        _rep_text,
+                    "source_text": _rep_src,
+                    "direction":   _rep_dir,
+                })
                 continue
 
             # Three-way dispatch: release signal | unknown | audio
@@ -2501,6 +2555,15 @@ async def websocket_handler(client_ws: WebSocket):
                     if _ctx_eligible:
                         conv_ctx.update(active_lang, target_lang, interpretation)
                         log(f"[flow-local] [ctx] updated: dir={conv_ctx.direction} meaning='{conv_ctx.last_clean_meaning}'")
+                        # REPEAT_LAST_OUTPUT_V1 — cache this turn's output for replay.
+                        # Uses same gate as conv_ctx — never stores noisy/low-conf turns.
+                        last_output = {
+                            "text":        full_translation.strip(),
+                            "target_lang": target_lang,
+                            "source_text": interpretation,   # post-rescue, not raw STT
+                            "direction":   f"{active_lang}→{target_lang}",
+                        }
+                        log(f"[flow-local] [repeat] cached: dir={last_output['direction']} text='{last_output['text'][:60]}'")
                     else:
                         log(f"[flow-local] [ctx] NOT updated: lane={turn_lane} conf={stt_confidence:.2f} eligible={_ctx_eligible}")
 

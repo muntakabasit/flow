@@ -480,6 +480,7 @@ struct OrbView: View {
 
 struct LastTurnActionsView: View {
     let turn: FlowSession.Turn
+    var onRepeat: (() -> Void)? = nil   // REPEAT_LAST_OUTPUT_V1
 
     @State private var copied = false
 
@@ -523,6 +524,16 @@ struct LastTurnActionsView: View {
                         .font(.system(size: 11, weight: .medium))
                         .tracking(0.4)
                         .foregroundColor(Color(hex: 0xD4AF37))
+                }
+
+                // REPEAT_LAST_OUTPUT_V1 — replay last spoken output
+                if let onRepeat {
+                    Button(action: onRepeat) {
+                        Label("Repeat", systemImage: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .medium))
+                            .tracking(0.4)
+                            .foregroundColor(Color(hex: 0xD4AF37))
+                    }
                 }
             }
             .padding(.top, 2)

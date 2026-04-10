@@ -223,6 +223,22 @@ final class FlowSession: ObservableObject {
         ws.connect()
     }
 
+    // MARK: Repeat last output (REPEAT_LAST_OUTPUT_V1) -------------------------
+
+    /// Replay the last translated turn's spoken audio without re-speaking.
+    /// Server regenerates TTS from its cached last_output.
+    /// Guard: only callable when state == .ready and WS is open.
+    /// Does NOT add a duplicate turn to history (server sends repeat_done, not translation_done).
+    func repeatLast() {
+        guard state == .ready else { return }
+        guard ws.sendRepeat() else { return }   // WS not open → no-op
+        tts.stop()                              // silence any residual audio
+        state = .processing
+        armProcessingPresenceCue()
+        startWatchdog(after: 30)
+        print("[Session] repeatLast — sent repeat request")
+    }
+
     // MARK: Server URL (runtime-configurable, no rebuild needed) ---------------
 
     /// The currently active server URL (read from UserDefaults, falls back to default).
@@ -364,6 +380,28 @@ final class FlowSession: ObservableObject {
                 // mid-playback and silently kills the remaining audio.
                 startWatchdog(after: 30)
                 tts.enqueue(pcm)
+            }
+
+        case "repeat_done":
+            // Server finished streaming the repeat TTS.
+            // Two paths:
+            //   a. skip_reason present → no cached output on server, return to ready immediately.
+            //   b. normal → wait for TTS queue to drain exactly like translation_done,
+            //      but do NOT call commitTurn() — this is a replay, not a new turn.
+            cancelProcessingPresenceCue()
+            if let reason = msg["skip_reason"] as? String {
+                print("[Session] repeat not available — \(reason)")
+                returnToReady()
+                break
+            }
+            tts.signalDone { [weak self] in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.light.impactOccurred()
+                    self.cancelProcessingPresenceCue()
+                    playReadyTone()
+                    self.returnToReady()
+                }
             }
 
         case "ping":
@@ -815,6 +853,16 @@ final class FlowWSClient {
     func sendPong() {
         guard connState == .open else { return }
         send(["type": "pong"])
+    }
+
+    @discardableResult
+    func sendRepeat() -> Bool {
+        guard connState == .open else {
+            print("[WS] sendRepeat — not open, dropping")
+            return false
+        }
+        send(["type": "repeat"])
+        return true
     }
 
     // MARK: Private

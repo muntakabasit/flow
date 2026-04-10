@@ -59,8 +59,11 @@ struct RootView: View {
 
                     // Last completed turn — copy / share. Hidden during active capture.
                     if let lastTurn = session.turns.first, session.state == .ready {
-                        LastTurnActionsView(turn: lastTurn)
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        LastTurnActionsView(
+                            turn: lastTurn,
+                            onRepeat: { session.repeatLast() }   // REPEAT_LAST_OUTPUT_V1
+                        )
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
 
                     Rectangle()
