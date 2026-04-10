@@ -128,7 +128,10 @@ ALLOWED_LANGS = ["en", "pt"]      # ONLY English and Portuguese (PT includes all
 LANGUAGE_SWITCH_HYSTERESIS = 3    # require 3 consecutive same-language detections before stable switch (prevents single-turn flicker)
 LANGUAGE_SWITCH_COOLDOWN = 0      # no cooldown — interpreter must switch every turn
 MIN_CONFIDENCE_STT = 0.55         # ASCII rescue gate (kept for rescue chain guard)
-MIN_CONFIDENCE_SWITCH = 0.75      # require 0.75+ confidence to switch languages
+MIN_CONFIDENCE_SWITCH = 0.90      # require 0.90+ confidence to switch languages (hardened)
+                                   # Hysteresis counter also only increments at this threshold —
+                                   # a low-confidence detection cannot accumulate toward a switch.
+CONF_LOW_CONFIDENCE_FLOOR = 0.60  # below this: low-quality signal — skip if short, log if long
 # 3-lane gate thresholds (spec-exact)
 CONF_STRONG_EN  = 0.55            # Lane A/B boundary — English
 CONF_STRONG_PT  = 0.45            # Lane A/B boundary — Portuguese (Whisper PT scores lower)
@@ -238,7 +241,8 @@ INTERPRETER_PROMPT = (
     "- NEVER output the source text unchanged — even single words must be translated\n"
     "- NEVER echo or repeat the source language\n"
     "- Preserve tone and register exactly (formal stays formal, casual stays casual)\n"
-    "- Do NOT add, remove, or rephrase content\n"
+    "- Translate MEANING and INTENT — not words. Reconstruct what the speaker meant.\n"
+    "- Do NOT add, remove, or rephrase content beyond what natural expression requires\n"
     "- Do NOT add acknowledgments, commentary, or explanations\n"
 )
 
@@ -1214,6 +1218,110 @@ def _looks_like_portuguese(text: str) -> bool:
     return hits >= 1
 
 
+# ---------------------------------------------------------------------------
+# Pre-translation semantic cleanup  (hardened v2)
+# ---------------------------------------------------------------------------
+#
+# Three-layer strategy — safest first:
+#
+#   Layer 1 — Collapse consecutive repeated words/fillers
+#       "like like like" → "like"    (keeps one; does NOT erase all instances)
+#       "tipo, tipo, tipo" → "tipo"
+#       Uses a while-loop so triple+ repetitions fully collapse in one call.
+#
+#   Layer 2 — Remove pure noise from ANYWHERE
+#       um/uh/er/hmm — no semantic value in any position
+#
+#   Layer 3 — Remove leading filler chains ONLY (^ anchored)
+#       "Like, so, basically, what I meant..." → "what I meant..."
+#       "So what happened?" → "what happened?"
+#       "I like this" — NOT touched (no ^ anchor matches mid-sentence)
+#
+#   Discourse markers ("I mean", "you know") removed anywhere —
+#       these are discourse glue, never factual content.
+#
+# Do NOT remove meaningful content. All patterns are conservative.
+# Never returns empty — falls back to original if cleanup empties the string.
+
+import re as _re
+
+# Layer 1: collapse N consecutive identical words (with optional comma-spaces)
+#   Matches: "like like like", "like, like, like", "so so"
+#   Replaces with the single captured word.
+_CONSEC_REPEAT = _re.compile(r'\b(\w+)(\s*,?\s+\1)+\b', _re.IGNORECASE)
+
+# Layer 2: pure noise — safe to remove ANYWHERE (no semantic content ever)
+_EN_NOISE = _re.compile(r'\b(um+|uh+|er+|hmm+|hm+)\b', _re.IGNORECASE)
+_PT_NOISE = _re.compile(r'\b(hmm+|hm+|uh+|um+)\b',     _re.IGNORECASE)
+
+# Layer 3a: discourse markers — safe anywhere (discourse glue, not content)
+_EN_DISCOURSE = _re.compile(
+    r'\b(you know what i mean|you know|i mean)\b',
+    _re.IGNORECASE,
+)
+# "né" is unambiguously a PT-BR discourse tag; "sabe" could mean "knows" mid-sentence
+# so we only handle it in the leading-chain pattern below.
+_PT_DISCOURSE = _re.compile(r'\bné\b', _re.IGNORECASE)
+
+# Layer 3b: LEADING filler chains — ^ anchored: only at start of string
+#   Matches one or more filler words followed by comma/space, greedily.
+#   "Like, so, yeah, basically what I..." → removes "Like, so, yeah, basically "
+#   "I like this" — SAFE: no ^ match.
+_EN_LEADING = _re.compile(
+    r'^(?:(?:yeah|yep|yup|ah+|so|like|well|okay|ok|right|'
+    r'basically|literally|actually)[,\s]*)+',
+    _re.IGNORECASE,
+)
+_PT_LEADING = _re.compile(
+    r'^(?:(?:tipo|assim|então|sabe|ah+)[,\s]*)+',
+    _re.IGNORECASE,
+)
+
+_MULTI_SPACE = _re.compile(r' {2,}')
+_LEAD_PUNCT  = _re.compile(r'^[,.\s]+')
+
+
+def _clean_input_text(text: str, source_lang: str = "en") -> str:
+    """Strip speech fillers and collapse repeated words before translation.
+
+    Passes (in order):
+      1. Collapse consecutive repeated words: "like like like" → "like"
+      2. Remove pure noise (um/uh/hmm) from anywhere
+      3. Remove discourse markers ("I mean", "you know") from anywhere
+      4. Strip LEADING filler chains ("Like, so, basically, …" prefix)
+      5. Normalise whitespace + leading punctuation
+
+    Rule-based only — no external libraries.
+    Falls back to the original string if cleanup produces an empty result.
+    """
+    cleaned = text.strip()
+
+    # Pass 1: collapse consecutive identical words (loop until stable)
+    # One re.sub pass reduces "like like like" → "like like" (only first pair).
+    # The while-loop ensures full collapse regardless of repetition count.
+    prev = None
+    while prev != cleaned:
+        prev = cleaned
+        cleaned = _CONSEC_REPEAT.sub(r'\1', cleaned)
+
+    # Passes 2-4: language-specific
+    if source_lang.startswith("en"):
+        cleaned = _EN_NOISE.sub("", cleaned)      # um/uh/hmm anywhere
+        cleaned = _EN_DISCOURSE.sub("", cleaned)  # "I mean" / "you know" anywhere
+        cleaned = _EN_LEADING.sub("", cleaned)    # leading filler chain
+    elif source_lang.startswith("pt"):
+        cleaned = _PT_NOISE.sub("", cleaned)      # hmm/uh anywhere
+        cleaned = _PT_DISCOURSE.sub("", cleaned)  # né anywhere
+        cleaned = _PT_LEADING.sub("", cleaned)    # leading filler chain
+
+    # Pass 5: normalise whitespace + leading punctuation artifacts
+    cleaned = _MULTI_SPACE.sub(" ", cleaned).strip()
+    cleaned = _LEAD_PUNCT.sub("", cleaned).strip()
+
+    # Never return empty — fall back to original
+    return cleaned if cleaned else text
+
+
 def _choose_translation_direction(source_language, forced_target_language=None):
     """Return (source_norm, target_lang, direction_hint, no_op)."""
     source_norm = _norm_lang(source_language) or "en"
@@ -1365,6 +1473,14 @@ async def translate_and_stream_tts(
     if no_op:
         await safe_send(client_ws, {"type": "translation_done", "text": text})
         return text, target_lang, 0.0, 0.0, 0.0, 0.0
+
+    # Semantic cleanup: strip fillers, collapse repeats before sending to LLM.
+    # SC-01: cleaner input → cleaner translation.
+    # SC-02: falls back to original if cleanup empties the string.
+    _raw_for_log = text
+    text = _clean_input_text(text, source_norm)
+    if text != _raw_for_log:
+        log(f"[flow-local] Semantic cleanup: raw='{_raw_for_log}' cleaned='{text}'")
 
     log(f"[flow-local] Translating: '{text}'")
 
@@ -1524,15 +1640,20 @@ async def translate_and_stream_tts(
             log(f"[flow-local] LLM raw: '{full_text.strip()}'")
             log(f"[flow-local] Streaming done: LLM={llm_ms:.0f}ms TTFT={llm_ttft_ms:.0f}ms first_audio={tts_first_ms:.0f}ms tts_total={tts_total_ms:.0f}ms sentences={sentences_sent}")
 
-            # ── Post-LLM translation validation (EN → PT-BR only) ──────────────
-            # If the model returned English text when Portuguese was required,
-            # catch it here, log it, and do ONE non-streaming retry with a
-            # stronger explicit prompt. TTS for this turn has already played;
-            # the corrected text is returned so the client displays the right output.
-            # SC-01/SC-02/SC-03 compliance point.
+            # ── Post-LLM translation validation — BOTH directions ──────────────
+            # If the model returned the wrong language, catch it here and do ONE
+            # non-streaming retry with a stronger explicit prompt.
+            # TTS for this turn has already played; corrected text is returned
+            # so the client transcript panel shows the right output.
+            #
+            # EN → PT-BR: output must look like Portuguese.
+            # PT → EN:    output must look like English.
+            # Max 1 retry per direction (SC-01/SC-02/SC-03 compliance).
             final_text = full_text.strip()
+
+            # ── Direction A: EN → PT-BR ────────────────────────────────────────
             if source_norm == "en" and target_lang.startswith("pt") and not _looks_like_portuguese(final_text):
-                log(f"[flow-local] ⚠️ Translation mismatch detected — output looks English ('{final_text[:60]}') — retrying")
+                log(f"[flow-local] ⚠️ EN→PT mismatch — output looks English ('{final_text[:60]}') — retrying")
                 _retry_prompt = (
                     "Translate the following text from English to Brazilian Portuguese. "
                     "Do NOT repeat the original language. "
@@ -1559,12 +1680,48 @@ async def translate_and_stream_tts(
                                   .get("content", "")
                                   .strip())
                     if _corrected and _looks_like_portuguese(_corrected):
-                        log(f"[flow-local] ✅ Retry produced valid PT-BR: '{_corrected[:60]}'")
+                        log(f"[flow-local] ✅ EN→PT retry produced valid PT-BR: '{_corrected[:60]}'")
                         final_text = _corrected
                     else:
-                        log(f"[flow-local] ⚠️ Retry also failed PT-BR check: '{_corrected[:60]}' — keeping original")
+                        log(f"[flow-local] ⚠️ EN→PT retry also failed PT-BR check: '{_corrected[:60]}' — keeping original")
                 except Exception as _retry_err:
-                    log(f"[flow-local] ⚠️ Translation retry request failed: {_retry_err}")
+                    log(f"[flow-local] ⚠️ EN→PT retry request failed: {_retry_err}")
+
+            # ── Direction B: PT → EN ───────────────────────────────────────────
+            elif source_norm.startswith("pt") and target_lang == "en" and not _looks_like_english(final_text):
+                log(f"[flow-local] ⚠️ PT→EN mismatch — output looks Portuguese ('{final_text[:60]}') — retrying")
+                _retry_prompt = (
+                    "Translate the following text from Brazilian Portuguese to English. "
+                    "Do NOT repeat the original language. "
+                    "Output ONLY the translated English sentence."
+                )
+                try:
+                    _client = await get_ollama_client()
+                    _retry_resp = await _client.post(
+                        OLLAMA_URL,
+                        json={
+                            "model": OLLAMA_MODEL,
+                            "messages": [
+                                {"role": "system", "content": _retry_prompt},
+                                {"role": "user",   "content": text},
+                            ],
+                            "stream": False,
+                            "keep_alive": -1,
+                            "options": {"temperature": 0.05, "num_predict": 200},
+                        },
+                    )
+                    _retry_resp.raise_for_status()
+                    _corrected = (_retry_resp.json()
+                                  .get("message", {})
+                                  .get("content", "")
+                                  .strip())
+                    if _corrected and _looks_like_english(_corrected):
+                        log(f"[flow-local] ✅ PT→EN retry produced valid English: '{_corrected[:60]}'")
+                        final_text = _corrected
+                    else:
+                        log(f"[flow-local] ⚠️ PT→EN retry also failed EN check: '{_corrected[:60]}' — keeping original")
+                except Exception as _retry_err:
+                    log(f"[flow-local] ⚠️ PT→EN retry request failed: {_retry_err}")
 
             return final_text, target_lang, llm_ms, tts_first_ms, tts_total_ms, llm_ttft_ms
 
@@ -2032,6 +2189,30 @@ async def websocket_handler(client_ws: WebSocket):
                         continue
                     # ────────────────────────────────────────────────────────
 
+                    # ── Low-confidence guard ────────────────────────────────────
+                    # STT confidence < CONF_LOW_CONFIDENCE_FLOOR (0.60):
+                    #   • Short text (< 3 words): skip — likely noise, not speech.
+                    #     Prevents a mumble or ambient sound from generating a
+                    #     garbled translation that confuses the conversation.
+                    #   • Longer text: let it through but log clearly.
+                    #     Could be genuine low-energy speech; rescue chain handles it.
+                    # This sits above the hard Lane-C floor (CONF_WEAK_FLOOR=0.30)
+                    # and adds a graduated quality gate without killing real speech.
+                    if stt_confidence < CONF_LOW_CONFIDENCE_FLOOR:
+                        _word_count = len(text.strip().split())
+                        if _word_count < 3:
+                            log(f"[flow-local] ⚠️ Low-conf short turn: conf={stt_confidence:.2f} words={_word_count} text='{text}' — skipping")
+                            await client_ws.send_json({
+                                "type": "turn_complete",
+                                "skip_reason": "low_confidence_short",
+                                "stt_confidence": round(stt_confidence, 2),
+                            })
+                            turns_since_switch += 1
+                            continue
+                        else:
+                            log(f"[flow-local] ⚠️ Low-conf turn: conf={stt_confidence:.2f} words={_word_count} text='{text}' — proceeding with caution")
+                    # ────────────────────────────────────────────────────────────
+
                     # LANGUAGE STABILITY: Apply hysteresis and cooldown
                     # Normalize detected language to canonical form (en or pt-BR)
                     normalized_lang = normalize_lang(detected_lang)
@@ -2060,19 +2241,28 @@ async def websocket_handler(client_ws: WebSocket):
                         # Reset hysteresis if candidate language changes
                         if normalized_lang != candidate_lang:
                             candidate_lang = normalized_lang
-                            lang_switch_counter = 1
-                            # Gate immediate direction flip on MIN_CONFIDENCE_SWITCH.
-                            # Low-confidence first detection: hold stable direction this turn
-                            # so a single uncertain transcription cannot flip translation.
-                            # Counter still increments — hysteresis accumulates normally.
+                            # HARDENED: only start accumulating if this first detection
+                            # already meets the confidence bar. A single noisy detection
+                            # of a different language must not start the switch clock.
                             if stt_confidence >= MIN_CONFIDENCE_SWITCH:
+                                lang_switch_counter = 1
                                 active_lang = normalized_lang
+                                switch_reason = "language_candidate_detected"
                             else:
+                                lang_switch_counter = 0  # don't start counter on low-conf
                                 active_lang = stable_lang
-                            switch_reason = "language_candidate_detected"
-                            log(f"[flow-local] Language candidate change: {candidate_lang} (detected as {detected_lang}, count=1)")
+                                switch_reason = f"language_candidate_rejected_low_conf ({stt_confidence:.2f}<{MIN_CONFIDENCE_SWITCH})"
+                            log(f"[flow-local] Language candidate: {candidate_lang} (detected={detected_lang}, conf={stt_confidence:.2f}, counter={lang_switch_counter})")
                         else:
-                            lang_switch_counter += 1
+                            # HARDENED: only advance the counter on HIGH-confidence
+                            # detections. A low-confidence turn that happens to match
+                            # the candidate cannot accumulate toward a switch.
+                            if stt_confidence >= MIN_CONFIDENCE_SWITCH:
+                                lang_switch_counter += 1
+                            else:
+                                switch_reason = f"hysteresis_not_advanced_low_conf ({stt_confidence:.2f}<{MIN_CONFIDENCE_SWITCH})"
+                                active_lang = stable_lang
+                                log(f"[flow-local] Language candidate {candidate_lang}: low conf {stt_confidence:.2f} — counter stays at {lang_switch_counter}/{LANGUAGE_SWITCH_HYSTERESIS}")
                             log(f"[flow-local] Language candidate {candidate_lang}: count={lang_switch_counter}/{LANGUAGE_SWITCH_HYSTERESIS}")
 
                             # Check if we have enough consecutive detections to switch
