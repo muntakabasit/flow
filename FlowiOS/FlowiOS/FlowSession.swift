@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import AudioToolbox
 import UIKit
+import Network
 
 // MARK: - State Machine (FLOW_SPEC §3) ----------------------------------------
 //
@@ -222,6 +223,20 @@ final class FlowSession: ObservableObject {
         ws.connect()
     }
 
+    // MARK: Server URL (runtime-configurable, no rebuild needed) ---------------
+
+    /// The currently active server URL (read from UserDefaults, falls back to default).
+    var serverURL: String {
+        UserDefaults.standard.string(forKey: FlowWSClient.urlDefaultsKey)
+        ?? FlowWSClient.defaultURLString
+    }
+
+    /// Update the WebSocket server URL and immediately reconnect.
+    /// Triggered by the long-press URL editor in the status bar.
+    func setServerURL(_ urlString: String) {
+        ws.setURL(urlString)
+    }
+
     // MARK: Press / Release (spec §4) -----------------------------------------
 
     func pressDown() {
@@ -343,8 +358,17 @@ final class FlowSession: ObservableObject {
             if let b64 = msg["audio"] as? String,
                let pcm = Data(base64Encoded: b64) {
                 cancelProcessingPresenceCue()
+                // Reset the 30s watchdog on every arriving chunk.
+                // Without this, a response whose audio stream spans > 30s total
+                // (long Portuguese passages, many sentences) trips the watchdog
+                // mid-playback and silently kills the remaining audio.
+                startWatchdog(after: 30)
                 tts.enqueue(pcm)
             }
+
+        case "ping":
+            // Server keepalive — respond so server can track liveness.
+            ws.sendPong()
 
         case "turn_complete":
             // Server skipped the turn (no speech / VAD idle / short sound / STT error).
@@ -670,51 +694,77 @@ final class TTSPlayer {
 //
 // WebSocket client strictly per FLOW_SPEC §6 wire protocol.
 //
+// Uses Network.framework (NWConnection) instead of URLSession so we can force
+// HTTP/1.1 in the TLS ALPN negotiation. iOS URLSession advertises h2 by default;
+// Cloudflare/ngrok tunnels negotiate HTTP/2, which breaks the WebSocket upgrade
+// handshake (101 Switching Protocols is HTTP/1.1-only). Forcing ALPN = http/1.1
+// matches what Python's websockets library does, which connects successfully.
+//
 // Client → Server:
-//   {"type":"audio_chunk","data":"<base64>"}
-//   {"type":"end_of_utterance"}
+//   {"type":"audio","audio":"<base64>"}
+//   {"type":"speech_stopped"}
+//   {"type":"tts_playback_done"}
 //
 // Server → Client:
-//   speech_started | speech_stopped | transcript | translation |
-//   translation_done | tts_audio | error  (others silently ignored)
+//   speech_started | speech_stopped | source_transcript | translation_delta |
+//   translation_done | tts_start | audio_delta | turn_complete | error
 
 final class FlowWSClient {
 
-    // Change this to your server address.
-    // Use ws://localhost:8765/ws for local development.
-    // Use ws://172.20.10.2:8765/ws for iPhone hotspot (MacBook as hotspot host).
-    // Use wss://<ngrok-host>/ws for remote/ngrok access.
-    private let url = URL(string: "wss://iteratively-unenvenomed-duncan.ngrok-free.dev/ws")!
+    // Active tunnel endpoint.
+    // Stored in UserDefaults under key "flow.serverURL" so it can be updated
+    // at runtime (long-press the status bar in the app) without a Xcode rebuild.
+    // Falls back to the hardcoded default below when UserDefaults has no value.
+    static let defaultURLString = "wss://gen-samples-lie-radical.trycloudflare.com/ws"
+    static let urlDefaultsKey   = "flow.serverURL"
+
+    private var url: URL {
+        let stored = UserDefaults.standard.string(forKey: Self.urlDefaultsKey)
+                     ?? Self.defaultURLString
+        return URL(string: stored) ?? URL(string: Self.defaultURLString)!
+    }
 
     var onMessage:    (([String: Any]) -> Void)?
     var onDisconnect: (() -> Void)?
     var onConnect:    (() -> Void)?
-    var onGiveUp:     (() -> Void)?        // called when max retries exhausted → .offline
+    var onGiveUp:     (() -> Void)?
 
     private enum ConnState { case idle, connecting, open, dead }
     private var connState: ConnState = .idle
-    private var task: URLSessionWebSocketTask?
+    private var conn: NWConnection?
 
-    // Audio buffered while WS is still opening
     private var audioQueue: [Data] = []
 
-    // Reconnect backoff state
     private var retryCount    = 0
     private var retryWorkItem: DispatchWorkItem?
-    private static let maxRetries = 8   // give up after ~63s total (1+2+4+8+16+30s × 1)
-
-    // All operations run on main thread — no locks needed.
+    private static let maxRetries = 8
 
     func connect() {
         guard connState == .idle || connState == .dead else { return }
-        // SC-04: cancel any pending scheduled retry before starting a fresh attempt.
         retryWorkItem?.cancel()
         retryWorkItem = nil
         connState = .connecting
         print("[WS] connecting → \(url)")
         print("Connecting to WebSocket:", url.absoluteString)
-        task = URLSession.shared.webSocketTask(with: url)
-        task?.resume()
+
+        // Force HTTP/1.1 in TLS ALPN — prevents HTTP/2 negotiation which breaks
+        // WebSocket handshake through Cloudflare tunnels.
+        let tlsOpts = NWProtocolTLS.Options()
+        sec_protocol_options_add_tls_application_protocol(
+            tlsOpts.securityProtocolOptions, "http/1.1"
+        )
+
+        let wsOpts = NWProtocolWebSocket.Options()
+        wsOpts.autoReplyPing = true
+
+        let params = NWParameters(tls: tlsOpts)
+        params.defaultProtocolStack.applicationProtocols.insert(wsOpts, at: 0)
+
+        conn = NWConnection(to: NWEndpoint.url(url), using: params)
+        conn?.stateUpdateHandler = { [weak self] state in
+            DispatchQueue.main.async { self?.handleState(state) }
+        }
+        conn?.start(queue: .main)
         receive()
     }
 
@@ -722,8 +772,21 @@ final class FlowWSClient {
         if connState == .idle || connState == .dead { connect() }
     }
 
+    /// Call this to change the server URL at runtime (no rebuild needed).
+    /// Cancels any in-flight connection and immediately reconnects with the new URL.
+    func setURL(_ urlString: String) {
+        UserDefaults.standard.set(urlString, forKey: Self.urlDefaultsKey)
+        // Cancel current connection and all pending retries, then reconnect.
+        retryWorkItem?.cancel()
+        retryWorkItem = nil
+        retryCount    = 0
+        conn?.cancel()
+        conn          = nil
+        connState     = .dead
+        connect()
+    }
+
     func sendAudio(_ pcm16: Data) {
-        // Called from capture queue — must dispatch to main.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if self.connState == .open {
@@ -736,7 +799,6 @@ final class FlowWSClient {
 
     @discardableResult
     func sendEndOfUtterance() -> Bool {
-        // spec §6 / server_local.py: client sends speech_stopped to force-finalize
         guard connState == .open else {
             print("[WS] sendEndOfUtterance — not open (state=\(connState)), dropping")
             return false
@@ -750,77 +812,101 @@ final class FlowWSClient {
         send(["type": "tts_playback_done"])
     }
 
-    // MARK: Private
-
-    private func transmitAudio(_ pcm16: Data) {
-        // server_local.py expects {"type":"audio","audio":"<base64>"}
-        let body = "{\"type\":\"audio\",\"audio\":\"\(pcm16.base64EncodedString())\"}"
-        task?.send(.string(body)) { _ in }
+    func sendPong() {
+        guard connState == .open else { return }
+        send(["type": "pong"])
     }
 
-    private func send(_ dict: [String: Any]) {
-        // spec §10: No messages after socket close
-        guard connState == .open else { return }
-        guard let data = try? JSONSerialization.data(withJSONObject: dict),
-              let str  = String(data: data, encoding: .utf8) else { return }
-        task?.send(.string(str)) { _ in }
+    // MARK: Private
+
+    private func handleState(_ state: NWConnection.State) {
+        switch state {
+        case .ready:
+            connState = .open
+            retryCount = 0
+            retryWorkItem?.cancel()
+            retryWorkItem = nil
+            print("[FLOW] Server connected — ready")
+            onConnect?()
+            let q = audioQueue; audioQueue = []
+            q.forEach { transmitAudio($0) }
+        case .failed(let err):
+            print("[WS] connection failed: \(err.localizedDescription)")
+            handleDrop()
+        case .cancelled:
+            if connState != .dead { handleDrop() }
+        default:
+            break
+        }
+    }
+
+    private func handleDrop() {
+        guard connState != .dead else { return }
+        if connState == .connecting {
+            print("[WS] failed to connect")
+        } else {
+            print("[WS] disconnected")
+        }
+        connState = .dead
+        conn = nil
+        audioQueue.removeAll()
+        onDisconnect?()
+        retryCount += 1
+        if retryCount > Self.maxRetries {
+            print("[WS] max retries (\(Self.maxRetries)) exhausted — giving up")
+            retryCount = 0
+            onGiveUp?()
+            return
+        }
+        let delay = min(30.0, pow(2.0, Double(retryCount - 1)))
+        print("[WS] retry \(retryCount)/\(Self.maxRetries) in \(Int(delay))s")
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, self.connState == .dead else { return }
+            self.connect()
+        }
+        retryWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
     }
 
     private func receive() {
-        task?.receive { [weak self] result in
+        conn?.receiveMessage { [weak self] data, context, _, error in
             DispatchQueue.main.async {
                 guard let self else { return }
-                switch result {
-
-                case .failure(let err):
-                    // Distinguish first-connect failure from mid-session drop.
-                    if self.connState == .connecting {
-                        print("[WS] failed to connect: \(err.localizedDescription)")
-                    } else {
-                        print("[WS] disconnected: \(err.localizedDescription)")
-                    }
-                    self.connState = .dead
-                    self.task      = nil
-                    self.audioQueue.removeAll()
-                    self.onDisconnect?()
-                    // Exponential backoff retry: 1s, 2s, 4s, 8s, 16s, 30s (capped).
-                    // SC-04: single DispatchWorkItem stored in retryWorkItem so a manual
-                    // connectIfNeeded() call can cancel the pending auto-retry first.
-                    self.retryCount += 1
-                    if self.retryCount > Self.maxRetries {
-                        print("[WS] max retries (\(Self.maxRetries)) exhausted — giving up")
-                        self.retryCount = 0
-                        self.onGiveUp?()
-                        return
-                    }
-                    let delay = min(30.0, pow(2.0, Double(self.retryCount - 1)))
-                    print("[WS] retry \(self.retryCount)/\(Self.maxRetries) in \(Int(delay))s")
-                    let item = DispatchWorkItem { [weak self] in
-                        guard let self, self.connState == .dead else { return }
-                        self.connect()
-                    }
-                    self.retryWorkItem = item
-                    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
-
-                case .success(let msg):
-                    // First successful receive = handshake complete.
-                    if self.connState == .connecting {
-                        self.connState = .open
-                        self.retryCount = 0          // reset backoff counter on clean connect
-                        self.retryWorkItem?.cancel() // cancel any stale scheduled retry
-                        self.retryWorkItem = nil
-                        print("[FLOW] Server connected — ready")
-                        self.onConnect?()
-                        let q = self.audioQueue; self.audioQueue = []
-                        q.forEach { self.transmitAudio($0) }
-                    }
-                    if case .string(let text) = msg {
-                        self.dispatch(text)
-                    }
-                    self.receive()  // re-arm
+                if let error = error {
+                    print("[WS] receive error: \(error.localizedDescription)")
+                    self.handleDrop()
+                    return
                 }
+                if let data = data,
+                   let meta = context?.protocolMetadata(
+                       definition: NWProtocolWebSocket.definition
+                   ) as? NWProtocolWebSocket.Metadata,
+                   meta.opcode == .text,
+                   let text = String(data: data, encoding: .utf8) {
+                    self.dispatch(text)
+                }
+                self.receive()
             }
         }
+    }
+
+    private func transmitAudio(_ pcm16: Data) {
+        sendRaw("{\"type\":\"audio\",\"audio\":\"\(pcm16.base64EncodedString())\"}")
+    }
+
+    private func send(_ dict: [String: Any]) {
+        guard connState == .open,
+              let data = try? JSONSerialization.data(withJSONObject: dict),
+              let str  = String(data: data, encoding: .utf8) else { return }
+        sendRaw(str)
+    }
+
+    private func sendRaw(_ text: String) {
+        guard connState == .open, let data = text.data(using: .utf8) else { return }
+        let meta = NWProtocolWebSocket.Metadata(opcode: .text)
+        let ctx  = NWConnection.ContentContext(identifier: "ws", metadata: [meta])
+        conn?.send(content: data, contentContext: ctx, isComplete: true,
+                   completion: .idempotent)
     }
 
     private func dispatch(_ raw: String) {

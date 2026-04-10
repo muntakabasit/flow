@@ -3,6 +3,11 @@ import SwiftUI
 struct RootView: View {
     @StateObject private var session = FlowSession()
 
+    // URL editor — triggered by long-pressing the status bar.
+    // Lets you update the Cloudflare tunnel URL without rebuilding the app.
+    @State private var showURLEditor = false
+    @State private var editedURL     = ""
+
     private var activeSourceLang: String? {
         session.pendingSourceLang ?? session.turns.first?.sourceLang
     }
@@ -13,8 +18,15 @@ struct RootView: View {
 
                 // ── READING ZONE ───────────────────────────────────────────
                 VStack(spacing: 0) {
-                    TrustBarView(state: session.state, connStatus: session.connStatus)
-                        .padding(.top, geo.safeAreaInsets.top)
+                    TrustBarView(
+                        state: session.state,
+                        connStatus: session.connStatus,
+                        onLongPress: {
+                            editedURL = session.serverURL
+                            showURLEditor = true
+                        }
+                    )
+                    .padding(.top, geo.safeAreaInsets.top)
 
                     HeaderView()
 
@@ -62,6 +74,22 @@ struct RootView: View {
                 .animation(.easeInOut(duration: 0.22), value: session.state == .ready && !session.turns.isEmpty)
             }
             .ignoresSafeArea()
+            // ── URL editor alert (long-press the status bar) ──────────────
+            // Lets you paste a new Cloudflare tunnel URL at runtime —
+            // no Xcode rebuild needed when the quick tunnel URL rotates.
+            .alert("Server URL", isPresented: $showURLEditor) {
+                TextField("wss://…trycloudflare.com/ws", text: $editedURL)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                Button("Connect") {
+                    let trimmed = editedURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    session.setServerURL(trimmed)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Long-press to update when the Cloudflare tunnel URL rotates.\nStarts with wss://")
+            }
         }
     }
 }

@@ -8,6 +8,7 @@ import SwiftUI
 struct TrustBarView: View {
     let state: AppState
     let connStatus: ConnStatus        // SC-01: drives connection dot colour
+    var onLongPress: (() -> Void)? = nil   // optional: opens URL editor
     @State private var pulse = false
 
     var body: some View {
@@ -54,6 +55,10 @@ struct TrustBarView: View {
         .padding(.vertical, 10)
         .background(Color.black)
         .onAppear { pulse = true }
+        // Long-press anywhere on the status bar → URL editor
+        .onLongPressGesture(minimumDuration: 0.6) {
+            onLongPress?()
+        }
     }
 
     private var isActive: Bool { state != .ready }
