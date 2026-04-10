@@ -200,6 +200,78 @@ STABLE_LANG_BIAS    = 0.10        # score bonus for candidates matching the sess
                                    # tiebreaker only — won't override a clearly better candidate
                                    # (~5 chars or ~0.10 conf difference overrides the bias)
 
+# ---------------------------------------------------------------------------
+# ConversationContext — lightweight session frame  (CONTROLLED_CONTEXT_V1)
+# ---------------------------------------------------------------------------
+#
+# Stores exactly five deterministic fields describing the conversational frame.
+# Updated only after a valid, clean, high-confidence turn (Lane A or B).
+# NEVER stores raw STT text. NEVER stores full turn history.
+#
+# Purpose: give the LLM a single-turn anchor so pronoun references ("say it
+# to her", "the same thing") resolve correctly across turns, and so direction
+# is preserved even when the LLM's context window is otherwise empty.
+#
+# Lifetime: one instance per WebSocket session; reset on disconnect.
+
+import dataclasses as _dc
+
+@_dc.dataclass
+class ConversationContext:
+    # 1. Language pair (always EN↔PT-BR for Flow; explicit for prompt clarity)
+    language_pair: str = "EN↔PT-BR"
+    # 2. Last confirmed translation direction ("en→pt-BR" | "pt-BR→en" | "unknown")
+    direction: str = "unknown"
+    # 3. Source/target role labels for the last clean turn
+    #    {"source": "en", "target": "pt-BR"}  — derived from active_lang
+    speaker_roles: dict = _dc.field(default_factory=dict)
+    # 4. Language we're currently translating INTO (tracks side of conversation)
+    current_target: str = ""
+    # 5. Cleaned source-language text of the LAST VALID TURN — post-rescue-chain,
+    #    pre-translation. Max 80 chars. Never raw STT. Never target-language text.
+    last_clean_meaning: str = ""
+
+    # Maximum characters to store in last_clean_meaning.
+    # Long enough to resolve pronouns/topics; short enough to add no latency.
+    MAX_MEANING_CHARS: int = _dc.field(default=80, init=False, repr=False)
+
+    def update(
+        self,
+        active_lang: str,
+        target_lang: str,
+        interpretation: str,
+    ) -> None:
+        """
+        Commit a completed clean turn into the context frame.
+        Called ONLY after Lane A/B translation with a non-empty result.
+        interpretation = post-rescue-chain source text (NEVER raw STT).
+        """
+        self.language_pair   = "EN↔PT-BR"
+        self.direction       = f"{active_lang}→{target_lang}"
+        self.speaker_roles   = {"source": active_lang, "target": target_lang}
+        self.current_target  = target_lang
+        # Truncate cleanly at a word boundary so we don't store a mid-word fragment
+        meaning = interpretation.strip()
+        if len(meaning) > self.MAX_MEANING_CHARS:
+            truncated = meaning[: self.MAX_MEANING_CHARS]
+            last_space = truncated.rfind(" ")
+            meaning = truncated[:last_space] if last_space > 0 else truncated
+        self.last_clean_meaning = meaning
+
+    def anchor_line(self) -> str:
+        """
+        Returns a single-line LLM context hint or empty string.
+        Empty string → caller must NOT append anything to the prompt.
+        Only populated after the first valid turn in the session.
+        """
+        if not self.last_clean_meaning:
+            return ""
+        return (
+            f"Prior utterance (reference only — resolve pronouns/topics from this): "
+            f'"{self.last_clean_meaning}"'
+        )
+
+
 # Thread pool for blocking inference calls (3 workers: STT + TTS can overlap)
 EXECUTOR = ThreadPoolExecutor(max_workers=3)
 
@@ -1455,12 +1527,18 @@ async def translate_and_stream_tts(
     loop: asyncio.AbstractEventLoop,
     turn_id: int,
     barge_in_event: asyncio.Event,
+    conv_ctx: "ConversationContext | None" = None,
 ) -> tuple[str, str, float, float, float]:
     """
     Streaming pipeline: LLM translation → sentence-level TTS → audio chunks.
 
     As the LLM generates tokens, we detect sentence boundaries and immediately
     synthesize + send each sentence. This overlaps LLM generation with TTS.
+
+    conv_ctx: optional ConversationContext — if present and has a last_clean_meaning,
+    its anchor_line() is appended to the system prompt to enable pronoun/topic
+    resolution across turns. Zero latency cost — it's a string append before the
+    first LLM call. No anchor → prompt is identical to baseline.
 
     Returns: (full_translation, target_lang, llm_ms, tts_first_audio_ms, tts_total_ms, llm_ttft_ms)
     """
@@ -1565,6 +1643,14 @@ async def translate_and_stream_tts(
     tts_task = asyncio.create_task(tts_consumer())
     sentence_idx = 0
 
+    # Build the system prompt — base prompt + optional context anchor.
+    # anchor_line() returns "" when this is the first turn or context has nothing
+    # useful, so the prompt falls back to identical-to-baseline behavior.
+    _anchor = conv_ctx.anchor_line() if conv_ctx else ""
+    _system_prompt = INTERPRETER_PROMPT + ("\n" + _anchor if _anchor else "")
+    if _anchor:
+        log(f"[flow-local] [ctx] anchor injected: '{_anchor}'")
+
     # Stream LLM translation
     last_error = None
     for attempt in range(1, OLLAMA_RETRIES + 1):
@@ -1578,7 +1664,7 @@ async def translate_and_stream_tts(
                 json={
                     "model": OLLAMA_MODEL,
                     "messages": [
-                        {"role": "system", "content": INTERPRETER_PROMPT},
+                        {"role": "system", "content": _system_prompt},
                         {"role": "user", "content": direction_hint + text},
                     ],
                     "stream": True,
@@ -1853,6 +1939,11 @@ async def websocket_handler(client_ws: WebSocket):
     lang_switch_counter = 0         # consecutive detections of a candidate language
     candidate_lang = None           # language we're considering switching to
     turns_since_switch = 0          # cooldown counter after language switch
+
+    # Controlled conversational context (CONTROLLED_CONTEXT_V1)
+    # One instance per session; updated only after valid clean turns.
+    # Gives the LLM a pronoun/topic anchor across turns — no full memory.
+    conv_ctx = ConversationContext()
 
     # Phase 1 accent hardening — unique ID for this WS session (used in failure log)
     import uuid as _uuid
@@ -2385,6 +2476,7 @@ async def websocket_handler(client_ws: WebSocket):
                             interpretation, active_lang,   # rescued text — not raw
                             preferred_target_lang if lock_target_lang else None,
                             client_ws, loop, turn_count, barge_in_event,
+                            conv_ctx,   # CONTROLLED_CONTEXT_V1: pronoun/topic anchor
                         )
 
                     # 4. Send final text (voice-first: text after audio started)
@@ -2393,6 +2485,24 @@ async def websocket_handler(client_ws: WebSocket):
                             "type": "translation_done",
                             "text": full_translation.strip(),
                         })
+
+                    # CONTROLLED_CONTEXT_V1 — update conversational frame.
+                    # Gates: Lane A or B (turn_lane), confidence above low-conf floor,
+                    # supported language, non-empty translation.
+                    # Stores interpretation (post-rescue-chain source text) — NOT raw STT,
+                    # NOT the translation output. Anchors the NEXT turn's LLM prompt.
+                    _ctx_eligible = (
+                        turn_lane in ('A', 'B')
+                        and stt_confidence >= CONF_LOW_CONFIDENCE_FLOOR
+                        and normalize_lang(detected_lang) is not None
+                        and bool(full_translation.strip())
+                        and bool(interpretation.strip())
+                    )
+                    if _ctx_eligible:
+                        conv_ctx.update(active_lang, target_lang, interpretation)
+                        log(f"[flow-local] [ctx] updated: dir={conv_ctx.direction} meaning='{conv_ctx.last_clean_meaning}'")
+                    else:
+                        log(f"[flow-local] [ctx] NOT updated: lane={turn_lane} conf={stt_confidence:.2f} eligible={_ctx_eligible}")
 
                     # Turn complete — log with streaming metrics
                     turn_ms = (time.monotonic() - turn_start) * 1000
