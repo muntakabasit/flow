@@ -753,7 +753,7 @@ final class FlowWSClient {
     // Stored in UserDefaults under key "flow.serverURL" so it can be updated
     // at runtime (long-press the status bar in the app) without a Xcode rebuild.
     // Falls back to the hardcoded default below when UserDefaults has no value.
-    static let defaultURLString = "wss://holes-revelation-sorry-coupled.trycloudflare.com/ws"
+    static let defaultURLString = "wss://flow.flowbasit.com/ws"
     static let urlDefaultsKey   = "flow.serverURL"
 
     private var url: URL {
