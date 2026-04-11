@@ -203,6 +203,7 @@ final class FlowSession: ObservableObject {
     // True once the server (speech_stopped) or the user (release) has already
     // triggered the turn end — whichever fires first wins; the other is a no-op.
     private var finalizeEmitted = false
+    private var hasEverConnected = false   // P0.3: distinguish "never tried" from "dropped"
 
     // Safety watchdog: if the app is still in .processing after 6s, force returnToReady().
     // Covers AVAudioEngine stalls, missed server messages, and any other stuck-state scenario.
@@ -218,8 +219,16 @@ final class FlowSession: ObservableObject {
         capture.prepareSession()
         ws.onMessage    = { [weak self] msg in self?.handleMessage(msg) }
         ws.onDisconnect = { [weak self] in self?.handleDisconnect() }
-        ws.onConnect    = { [weak self] in self?.connStatus = .online }
-        ws.onGiveUp     = { [weak self] in self?.connStatus = .offline }
+        ws.onConnect    = { [weak self] in
+            self?.hasEverConnected = true
+            self?.connStatus = .online
+        }
+        ws.onGiveUp     = { [weak self] in
+            // P0.3: if we were connected before, show reconnecting not offline —
+            // offline is reserved for "never successfully connected this session"
+            guard let self else { return }
+            self.connStatus = self.hasEverConnected ? .reconnecting : .offline
+        }
         ws.connect()
     }
 
