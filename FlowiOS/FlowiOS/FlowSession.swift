@@ -244,7 +244,7 @@ final class FlowSession: ObservableObject {
         tts.stop()                              // silence any residual audio
         state = .processing
         armProcessingPresenceCue()
-        startWatchdog(after: 30)
+        startWatchdog(after: 10)    // P1.5: 10s to first chunk (not 30s — TTS should start fast)
         print("[Session] repeatLast — sent repeat request")
     }
 
