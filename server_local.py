@@ -1291,29 +1291,31 @@ def _looks_like_portuguese(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Pre-translation semantic cleanup  (hardened v2)
+# Pre-translation semantic cleanup  (hardened v2 + guardrails patch)
 # ---------------------------------------------------------------------------
 #
-# Three-layer strategy — safest first:
+# GUARDRAIL LAW: Clean structure, not content. Never sanitize meaning.
 #
-#   Layer 1 — Collapse consecutive repeated words/fillers
-#       "like like like" → "like"    (keeps one; does NOT erase all instances)
-#       "tipo, tipo, tipo" → "tipo"
-#       Uses a while-loop so triple+ repetitions fully collapse in one call.
+#   Permitted removals:
+#     - hesitation noise (um/uh/hmm) — zero semantic content, any position
+#     - leading filler/discourse chains — ^ anchored, prefix only
+#     - discourse glue ("I mean", "you know") — positionally safe anywhere
+#     - consecutive word repetitions — collapses stutter, keeps one instance
 #
-#   Layer 2 — Remove pure noise from ANYWHERE
-#       um/uh/er/hmm — no semantic value in any position
+#   NEVER removed or altered:
+#     - explicit / strong language  ("f*ck", "damn", "merda", etc.)
+#     - emotional wording           ("I hate", "I love", "I'm scared")
+#     - raw intent words            verbs of desire/refusal/instruction
+#     - mid-sentence content words  only ^ anchored patterns touch leading text
 #
-#   Layer 3 — Remove leading filler chains ONLY (^ anchored)
-#       "Like, so, basically, what I meant..." → "what I meant..."
-#       "So what happened?" → "what happened?"
-#       "I like this" — NOT touched (no ^ anchor matches mid-sentence)
+# Over-clean guard: _is_overcleaned(original, cleaned) → bool
+#   If cleanup removed > 40% of word-count, the result is discarded and
+#   the original is returned unchanged. Prevents cascade-removal on short
+#   turns where fillers dominate (e.g. "like, um, yeah" → "" → fallback).
 #
-#   Discourse markers ("I mean", "you know") removed anywhere —
-#       these are discourse glue, never factual content.
-#
-# Do NOT remove meaningful content. All patterns are conservative.
-# Never returns empty — falls back to original if cleanup empties the string.
+# Short-turn bypass in context store: turns < 5 words skip cleanup for
+#   ctx storage and store the rescue-chain interpretation directly, ensuring
+#   emotionally loaded short phrases are never silently stripped.
 
 import re as _re
 
@@ -1352,9 +1354,34 @@ _PT_LEADING = _re.compile(
 _MULTI_SPACE = _re.compile(r' {2,}')
 _LEAD_PUNCT  = _re.compile(r'^[,.\s]+')
 
+# Over-clean threshold: if cleanup removes more than this fraction of the
+# original word-count, it is considered overcleaned and the original is returned.
+_OVERCLEAN_MAX_WORD_LOSS = 0.40   # 40% — conservative; most turns lose < 15%
+
+
+def _is_overcleaned(original: str, cleaned: str) -> bool:
+    """Return True if cleanup removed too many words from the original.
+
+    Guard against cascade-removal on short turns where fillers dominate.
+    Example: "like, um, yeah" (3 words) → "" is 100% loss → overcleaned.
+    Example: "like, um, I need help" (5 words) → "I need help" (3) = 40% loss → boundary.
+
+    GUARDRAIL: Clean structure, not content. Never sanitize meaning.
+    """
+    orig_words = original.split()
+    if not orig_words:
+        return False   # empty original — nothing to protect
+    clean_words = cleaned.split()
+    loss = (len(orig_words) - len(clean_words)) / len(orig_words)
+    return loss > _OVERCLEAN_MAX_WORD_LOSS
+
 
 def _clean_input_text(text: str, source_lang: str = "en") -> str:
     """Strip speech fillers and collapse repeated words before translation.
+
+    GUARDRAIL: Clean structure, not content. Never sanitize meaning.
+    Permitted: hesitation noise, leading filler prefix, discourse glue.
+    Forbidden: explicit language, emotional wording, raw intent.
 
     Passes (in order):
       1. Collapse consecutive repeated words: "like like like" → "like"
@@ -1362,11 +1389,14 @@ def _clean_input_text(text: str, source_lang: str = "en") -> str:
       3. Remove discourse markers ("I mean", "you know") from anywhere
       4. Strip LEADING filler chains ("Like, so, basically, …" prefix)
       5. Normalise whitespace + leading punctuation
+      6. Over-clean guard: if > 40% of words removed → return original
 
     Rule-based only — no external libraries.
-    Falls back to the original string if cleanup produces an empty result.
+    Falls back to the original string if cleanup produces an empty result
+    or triggers the over-clean guard.
     """
-    cleaned = text.strip()
+    original = text.strip()
+    cleaned  = original
 
     # Pass 1: collapse consecutive identical words (loop until stable)
     # One re.sub pass reduces "like like like" → "like like" (only first pair).
@@ -1380,18 +1410,24 @@ def _clean_input_text(text: str, source_lang: str = "en") -> str:
     if source_lang.startswith("en"):
         cleaned = _EN_NOISE.sub("", cleaned)      # um/uh/hmm anywhere
         cleaned = _EN_DISCOURSE.sub("", cleaned)  # "I mean" / "you know" anywhere
-        cleaned = _EN_LEADING.sub("", cleaned)    # leading filler chain
+        cleaned = _EN_LEADING.sub("", cleaned)    # leading filler chain only
     elif source_lang.startswith("pt"):
         cleaned = _PT_NOISE.sub("", cleaned)      # hmm/uh anywhere
         cleaned = _PT_DISCOURSE.sub("", cleaned)  # né anywhere
-        cleaned = _PT_LEADING.sub("", cleaned)    # leading filler chain
+        cleaned = _PT_LEADING.sub("", cleaned)    # leading filler chain only
 
     # Pass 5: normalise whitespace + leading punctuation artifacts
     cleaned = _MULTI_SPACE.sub(" ", cleaned).strip()
     cleaned = _LEAD_PUNCT.sub("", cleaned).strip()
 
-    # Never return empty — fall back to original
-    return cleaned if cleaned else text
+    # Pass 6: over-clean guard — discard result if too many words lost
+    if not cleaned:
+        return original   # empty result → always return original
+    if _is_overcleaned(original, cleaned):
+        log(f"[flow-local] [cleanup] overcleaned guard fired — returning original: '{original}'")
+        return original
+
+    return cleaned
 
 
 def _choose_translation_direction(source_language, forced_target_language=None):
@@ -2553,8 +2589,22 @@ async def websocket_handler(client_ws: WebSocket):
                         and bool(interpretation.strip())
                     )
                     if _ctx_eligible:
-                        conv_ctx.update(active_lang, target_lang, interpretation)
-                        log(f"[flow-local] [ctx] updated: dir={conv_ctx.direction} meaning='{conv_ctx.last_clean_meaning}'")
+                        # GUARDRAIL: short sentences (< 5 words) store the rescue-chain
+                        # interpretation directly — never the cleaned version.
+                        # Short emotionally loaded phrases ("I hate this", "stop it",
+                        # "merda!") are at highest risk of meaning-loss from cleanup.
+                        # Long sentences (≥ 5 words) store the cleaned interpretation
+                        # so the context anchor is structurally clean for the LLM.
+                        _interp_words = interpretation.strip().split()
+                        if len(_interp_words) < 5:
+                            _ctx_meaning = interpretation   # raw rescue-chain — preserve exact intent
+                            _ctx_source  = "raw"
+                        else:
+                            _cleaned_interp = _clean_input_text(interpretation, active_lang)
+                            _ctx_meaning    = _cleaned_interp
+                            _ctx_source     = "cleaned"
+                        conv_ctx.update(active_lang, target_lang, _ctx_meaning)
+                        log(f"[flow-local] [ctx] updated ({_ctx_source}): dir={conv_ctx.direction} meaning='{conv_ctx.last_clean_meaning}'")
                         # REPEAT_LAST_OUTPUT_V1 — cache this turn's output for replay.
                         # Uses same gate as conv_ctx — never stores noisy/low-conf turns.
                         last_output = {
