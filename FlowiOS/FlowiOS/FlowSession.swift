@@ -267,6 +267,8 @@ final class FlowSession: ObservableObject {
     func pressDown() {
         // Block new press if turn is still resolving (spec §10 — no state corruption).
         guard state == .ready else { return }
+        // Block if socket is not live — mic must not start while reconnecting/offline.
+        guard connStatus == .online else { return }
 
         finalizeEmitted = false
         liveTranscript  = ""
@@ -910,10 +912,10 @@ final class FlowWSClient {
         onDisconnect?()
         retryCount += 1
         if retryCount > Self.maxRetries {
-            print("[WS] max retries (\(Self.maxRetries)) exhausted — giving up")
-            retryCount = 0
+            // Backoff saturated — keep retrying at 30s forever (self-healing).
+            // onGiveUp updates UI once; loop continues below without returning.
+            retryCount = Self.maxRetries
             onGiveUp?()
-            return
         }
         let delay = min(30.0, pow(2.0, Double(retryCount - 1)))
         print("[WS] retry \(retryCount)/\(Self.maxRetries) in \(Int(delay))s")
