@@ -1942,8 +1942,22 @@ def _prewarm_tts():
 # WebSocket handler — the main pipeline
 # ---------------------------------------------------------------------------
 
+# HARD SINGLE SESSION — only one active WebSocket at a time.
+# Second connection is rejected cleanly with code 4000.
+# Future: surface this state in client UI instead of silent reconnect.
+_active_ws: "WebSocket | None" = None
+_ws_lock = asyncio.Lock()
+
+
 @app.websocket("/ws")
 async def websocket_handler(client_ws: WebSocket):
+    global _active_ws
+    async with _ws_lock:
+        if _active_ws is not None:
+            await client_ws.close(code=4000, reason="single-session: another client is active")
+            log("[flow-local] Rejected duplicate connection (4000)")
+            return
+        _active_ws = client_ws
     await client_ws.accept()
     log("[flow-local] Client connected")
 
@@ -2486,24 +2500,14 @@ async def websocket_handler(client_ws: WebSocket):
 
                     # Optional manual source override from client settings
                     if preferred_source_lang:
+                        log(
+                            f"[flow-local] lang_override: stability={active_lang} → override={preferred_source_lang}"
+                            f" text={text[:40]!r}"
+                        )
                         active_lang = preferred_source_lang
                         switch_reason = f"manual_source_override ({preferred_source_lang})"
 
-                    # Send source transcript with language diagnostics
-                    await client_ws.send_json({
-                        "type": "source_transcript",
-                        "text": text,
-                        "diagnostics": {
-                            "detected_lang": detected_lang,
-                            "stt_confidence": stt_confidence,
-                            "stable_lang": stable_lang,
-                            "active_lang": active_lang,
-                            "switch_reason": switch_reason,
-                            "segment_ms": segment_ms,
-                        }
-                    })
-
-                    # 1b. Three-pass rescue chain (internal — raw shown to user above).
+                    # 1b. Three-pass rescue chain (internal).
                     #     Pass 1: phonetic confusion  e.g. "no feet" → "no fit"
                     #     Pass 2: slang/shorthand      e.g. "no fit"  → "can't"
                     #     Pass 3: accent normalization e.g. "axed me" → "asked me"  [EN only]
@@ -2518,6 +2522,22 @@ async def websocket_handler(client_ws: WebSocket):
                         f" | rescued='{interpretation}' [{'changed' if interpretation != phonetic else 'clean'}]"
                         f" | rescue_changes={rescue_changed_count} src={active_lang}"
                     )
+
+                    # Send post-rescue transcript — this is what translation actually operated on.
+                    # For clean audio rescue is a no-op (interpretation == text); for noisy audio
+                    # the user sees the corrected text, which is honest.
+                    await client_ws.send_json({
+                        "type": "source_transcript",
+                        "text": interpretation,
+                        "diagnostics": {
+                            "detected_lang": detected_lang,
+                            "stt_confidence": stt_confidence,
+                            "stable_lang": stable_lang,
+                            "active_lang": active_lang,
+                            "switch_reason": switch_reason,
+                            "segment_ms": segment_ms,
+                        }
+                    })
 
                     # 1c. Full 3-lane classification (rescue_changed_count + stable_lang now available)
                     turn_lane, lane_reason = _classify_turn_lane(
@@ -2589,22 +2609,12 @@ async def websocket_handler(client_ws: WebSocket):
                         and bool(interpretation.strip())
                     )
                     if _ctx_eligible:
-                        # GUARDRAIL: short sentences (< 5 words) store the rescue-chain
-                        # interpretation directly — never the cleaned version.
-                        # Short emotionally loaded phrases ("I hate this", "stop it",
-                        # "merda!") are at highest risk of meaning-loss from cleanup.
-                        # Long sentences (≥ 5 words) store the cleaned interpretation
-                        # so the context anchor is structurally clean for the LLM.
-                        _interp_words = interpretation.strip().split()
-                        if len(_interp_words) < 5:
-                            _ctx_meaning = interpretation   # raw rescue-chain — preserve exact intent
-                            _ctx_source  = "raw"
-                        else:
-                            _cleaned_interp = _clean_input_text(interpretation, active_lang)
-                            _ctx_meaning    = _cleaned_interp
-                            _ctx_source     = "cleaned"
+                        # Store interpretation directly — it is already the rescue-chain
+                        # output (phonetic + slang + accent passes). Re-cleaning it would
+                        # corrupt short emotionally-loaded turns ("I hate this", "merda!").
+                        _ctx_meaning = interpretation
                         conv_ctx.update(active_lang, target_lang, _ctx_meaning)
-                        log(f"[flow-local] [ctx] updated ({_ctx_source}): dir={conv_ctx.direction} meaning='{conv_ctx.last_clean_meaning}'")
+                        log(f"[flow-local] [ctx] updated: dir={conv_ctx.direction} meaning='{conv_ctx.last_clean_meaning}'")
                         # REPEAT_LAST_OUTPUT_V1 — cache this turn's output for replay.
                         # Uses same gate as conv_ctx — never stores noisy/low-conf turns.
                         last_output = {
@@ -2694,6 +2704,9 @@ async def websocket_handler(client_ws: WebSocket):
     finally:
         if keepalive_task:
             keepalive_task.cancel()
+        async with _ws_lock:
+            if _active_ws is client_ws:
+                _active_ws = None
     log("[flow-local] Session ended")
 
 
