@@ -2536,7 +2536,20 @@ async def websocket_handler(client_ws: WebSocket):
                         # Unsupported language detected while stable lang exists
                         active_lang = stable_lang  # Ignore unsupported detection
                         switch_reason = f"unsupported_lang_ignored ({detected_lang})"
-                        log(f"[flow-local] Unsupported language detected: {detected_lang}, keeping {stable_lang}")
+                        log(
+                            f"[flow-local] [lang_lock] detected={detected_lang} kept={active_lang}"
+                            f" reason={switch_reason} text={text[:40]!r}"
+                        )
+
+                    # P1.8: unified lock log — fires whenever the stability system uses a
+                    # different (supported) language than what the detector returned this turn.
+                    # Covers: low-conf rejection, cooldown block, hysteresis pending.
+                    # Unsupported-lang case is already logged in the else branch above.
+                    if normalized_lang and normalized_lang != active_lang:
+                        log(
+                            f"[flow-local] [lang_lock] detected={detected_lang} kept={active_lang}"
+                            f" reason={switch_reason} text={text[:40]!r}"
+                        )
 
                     # Optional manual source override from client settings
                     if preferred_source_lang:
