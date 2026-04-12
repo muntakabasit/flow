@@ -18,11 +18,13 @@ PLISTS=(
 mkdir -p "$AGENTS_DIR"
 mkdir -p "$REPO/logs"
 
-# Verify cloudflared path matches plist
-CF_PATH=$(grep -A1 'cloudflared' "$LAUNCHD_DIR/com.flow.tunnel.plist" | grep string | head -1 | sed 's/.*<string>\(.*\)<\/string>.*/\1/')
+# Verify cloudflared is present at the path frozen in com.flow.tunnel.plist.
+# If this fails, update ProgramArguments in the plist to match `which cloudflared`.
+CF_PATH="/opt/homebrew/bin/cloudflared"
 if [ ! -x "$CF_PATH" ]; then
     echo "⚠️  cloudflared not found at $CF_PATH"
-    echo "   Update ProgramArguments in com.flow.tunnel.plist to: $(which cloudflared 2>/dev/null || echo 'NOT FOUND')"
+    echo "   Run: which cloudflared"
+    echo "   Then update ProgramArguments[0] in launchd/com.flow.tunnel.plist"
     exit 1
 fi
 
