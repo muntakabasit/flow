@@ -1376,6 +1376,43 @@ def _is_overcleaned(original: str, cleaned: str) -> bool:
     return loss > _OVERCLEAN_MAX_WORD_LOSS
 
 
+# ---------------------------------------------------------------------------
+# No-op translation guard — detect LLM output in same language as source
+# ---------------------------------------------------------------------------
+# Words that are UNIQUE to English (never appear in normal PT-BR text).
+_EN_UNIQUE: frozenset = frozenset([
+    "the", "is", "are", "was", "were", "have", "has", "had",
+    "will", "would", "could", "should", "this", "that", "these",
+    "those", "there", "their", "they", "with", "what", "when",
+    "where", "which", "been", "being", "does", "did",
+])
+# Words/tokens unique to Portuguese (accented or structurally distinct).
+_PT_UNIQUE: frozenset = frozenset([
+    "é", "está", "são", "estão", "não", "você", "isso", "mais",
+    "também", "aqui", "porque", "então", "muito", "mas", "bem",
+    "meu", "minha", "nosso", "nossa", "dela", "dele", "agora",
+    "ainda", "já", "vou", "vai", "foi", "ser", "ter", "fazer",
+])
+
+
+def _is_noop_output(text: str, source_lang: str) -> bool:
+    """Return True if LLM output appears to be in the SAME language as source.
+
+    Uses a lightweight word-marker heuristic — no external model required.
+    Threshold: 2+ English-unique markers OR 1+ Portuguese-unique marker.
+    Short texts (< 3 words) are excluded — too small to judge reliably.
+    """
+    words = re.findall(r"\b\w+\b", text.lower())
+    if len(words) < 3:
+        return False
+    word_set = set(words)
+    if source_lang.startswith("en"):
+        return len(word_set & _EN_UNIQUE) >= 2   # 2+ EN markers in EN-source → no-op
+    if source_lang.startswith("pt"):
+        return len(word_set & _PT_UNIQUE) >= 1   # 1+ PT marker in PT-source → no-op
+    return False
+
+
 def _clean_input_text(text: str, source_lang: str = "en") -> str:
     """Strip speech fillers and collapse repeated words before translation.
 
@@ -1564,6 +1601,7 @@ async def translate_and_stream_tts(
     turn_id: int,
     barge_in_event: asyncio.Event,
     conv_ctx: "ConversationContext | None" = None,
+    extra_instruction: str = "",             # injected on no-op retry; empty = normal call
 ) -> tuple[str, str, float, float, float]:
     """
     Streaming pipeline: LLM translation → sentence-level TTS → audio chunks.
@@ -1684,6 +1722,8 @@ async def translate_and_stream_tts(
     # useful, so the prompt falls back to identical-to-baseline behavior.
     _anchor = conv_ctx.anchor_line() if conv_ctx else ""
     _system_prompt = INTERPRETER_PROMPT + ("\n" + _anchor if _anchor else "")
+    if extra_instruction:
+        _system_prompt += "\n" + extra_instruction   # no-op retry: stronger language enforcement
     if _anchor:
         log(f"[flow-local] [ctx] anchor injected: '{_anchor}'")
 
@@ -2588,6 +2628,35 @@ async def websocket_handler(client_ws: WebSocket):
                             client_ws, loop, turn_count, barge_in_event,
                             conv_ctx,   # CONTROLLED_CONTEXT_V1: pronoun/topic anchor
                         )
+
+                    # NO-OP GUARD: ensure LLM output is in target language, not source.
+                    # The LLM can ignore direction hints and echo source text despite a
+                    # correct prompt — this guard catches and corrects that failure.
+                    if full_translation.strip() and _is_noop_output(full_translation, active_lang):
+                        _tgt_name = "Portuguese" if active_lang.startswith("en") else "English"
+                        _src_name = "English"    if active_lang.startswith("en") else "Portuguese"
+                        log(
+                            f"[flow-local] [NO-OP DETECTED] source={active_lang} "
+                            f"output appears to be {_src_name} — retrying with stronger instruction"
+                        )
+                        _retry_instr = (
+                            f"CRITICAL OVERRIDE: Your output MUST be in {_tgt_name} only. "
+                            f"Do NOT output {_src_name} under any circumstances. "
+                            f"Translate into {_tgt_name} now."
+                        )
+                        full_translation, target_lang, *_ = await translate_and_stream_tts(
+                            interpretation, active_lang,
+                            preferred_target_lang if lock_target_lang else None,
+                            client_ws, loop, turn_count, barge_in_event,
+                            conv_ctx,
+                            extra_instruction=_retry_instr,
+                        )
+                        if _is_noop_output(full_translation, active_lang):
+                            log(
+                                f"[flow-local] [NO-OP BLOCKED] source={active_lang} "
+                                f"retry still {_src_name} — turn suppressed"
+                            )
+                            full_translation = ""   # blocks translation_done + ctx update
 
                     # 4. Send final text (voice-first: text after audio started)
                     if full_translation.strip():
