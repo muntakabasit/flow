@@ -268,7 +268,8 @@ final class FlowSession: ObservableObject {
         // Block new press if turn is still resolving (spec §10 — no state corruption).
         guard state == .ready else { return }
         // Block if socket is not live — mic must not start while reconnecting/offline.
-        guard connStatus == .online else { return }
+        // Tap while reconnecting bypasses the retry timer for immediate attempt.
+        guard connStatus == .online else { ws.reconnectNow(); return }
 
         finalizeEmitted = false
         liveTranscript  = ""
@@ -786,7 +787,10 @@ final class FlowWSClient {
 
     private var retryCount    = 0
     private var retryWorkItem: DispatchWorkItem?
-    private static let maxRetries = 8
+    // Fast window (attempts 1-5): tight retries for server restarts / brief drops.
+    // Slow window (attempts 6+): exponential back-off for unstable networks.
+    private static let fastDelays: [Double] = [0.5, 1.0, 1.0, 2.0, 2.0]
+    private static let maxRetries = 9    // fast(5) + slow(4) before saturation → 30s
 
     func connect() {
         guard connState == .idle || connState == .dead else { return }
@@ -917,14 +921,31 @@ final class FlowWSClient {
             retryCount = Self.maxRetries
             onGiveUp?()
         }
-        let delay = min(30.0, pow(2.0, Double(retryCount - 1)))
-        print("[WS] retry \(retryCount)/\(Self.maxRetries) in \(Int(delay))s")
+        let delay = Self.retryDelay(for: retryCount)
+        print("[WS] retry \(retryCount) in \(delay)s")
         let item = DispatchWorkItem { [weak self] in
             guard let self, self.connState == .dead else { return }
             self.connect()
         }
         retryWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    private static func retryDelay(for attempt: Int) -> Double {
+        if attempt <= fastDelays.count {
+            return fastDelays[attempt - 1]                          // fast window
+        }
+        let slowIndex = attempt - fastDelays.count                  // 1, 2, 3, 4…
+        return min(30.0, pow(2.0, Double(slowIndex + 1)))           // 4, 8, 16, 30
+    }
+
+    /// Cancel pending retry and reconnect immediately.
+    /// Called when user taps mic while reconnecting — bypasses timer.
+    func reconnectNow() {
+        retryWorkItem?.cancel()
+        retryWorkItem = nil
+        guard connState == .dead else { return }
+        connect()
     }
 
     private func receive() {
