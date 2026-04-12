@@ -4,37 +4,40 @@
 # Three checks — all must pass:
 #   1. Port 8765 listening  (server_local.py up and bound)
 #   2. cloudflared tunnel process "flow" running
-#   3. https://flow.flowbasit.com/ws reachable through Cloudflare
+#   3. wss://flow.flowbasit.com/ws — real WebSocket handshake (Python websockets)
 #
-# Check 3 pass criteria:
-#   101 — WebSocket upgrade accepted (full success)
-#   400 — Server rejected curl's WS headers (server IS alive; curl can't WS)
-#   426 — Upgrade Required (server alive, signalling WS-only endpoint)
-#
-# Check 3 fail criteria:
-#   000 — No TCP response (DNS or network unreachable)
-#   502 — Cloudflare cannot reach origin (tunnel broken)
-#   530 — Cloudflare: origin not connected (cloudflared not registered)
-#   other — unexpected; treated as failure
+# Check 3 pass:  connects and closes cleanly (exit 0)
+# Check 3 fail:  timeout / connection refused / handshake error (exit nonzero)
 #
 # RETRY BEHAVIOUR:
 #   Port check:     retries up to 30 times / 1s apart (30s window)
 #   Endpoint check: retries up to 10 times / 3s apart (30s window)
 #   Both windows cover normal server warmup (mlx-whisper load + Piper prewarm).
 #
+# Python used: repo venv (venv/bin/python3) if present, else system python3.
+# Requires:    websockets>=12.0 (already in requirements.txt).
+#
 # Usage:  ./check_flow_health.sh
 # Exit:   0 = all green  |  1 = one or more checks failed
 
 set -uo pipefail
 
+REPO="/Volumes/homelab/Storage/ofa_jack_agent/flow"
 PORT=8765
 TUNNEL_NAME="flow"
-PUBLIC_URL="https://flow.flowbasit.com/ws"
+WS_URL="wss://flow.flowbasit.com/ws"
 PASS=0
 FAIL=0
 
 ok()   { echo "  ✅ $1"; ((PASS++)) || true; }
 fail() { echo "  ❌ $1"; ((FAIL++)) || true; }
+
+# Prefer repo venv python so websockets version is guaranteed.
+if [ -x "$REPO/venv/bin/python3" ]; then
+    PYTHON="$REPO/venv/bin/python3"
+else
+    PYTHON="python3"
+fi
 
 echo ""
 echo "Flow Health — $(date '+%Y-%m-%d %H:%M:%S')"
@@ -64,45 +67,46 @@ else
     fail "NOT running — run ./start_flow_tunnel.sh"
 fi
 
-# 3. Public endpoint — retry up to 30s (3s intervals)
-echo "3. Endpoint $PUBLIC_URL"
+# 3. Real WebSocket handshake — retry up to 30s (3s intervals)
+echo "3. WebSocket $WS_URL"
 ENDPOINT_OK=0
 for i in $(seq 1 10); do
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-        --max-time 6 \
-        -H "Upgrade: websocket" \
-        -H "Connection: Upgrade" \
-        -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-        -H "Sec-WebSocket-Version: 13" \
-        "$PUBLIC_URL/ws" 2>/dev/null || echo "000")
-    case "$HTTP_CODE" in
-        101|400|426)
-            ok "Reachable — HTTP $HTTP_CODE (attempt $i)"
-            ENDPOINT_OK=1
-            break
-            ;;
-        000)
-            [ $i -eq 1 ] && echo "     waiting for endpoint..."
-            sleep 3
-            ;;
-        502)
-            fail "Bad gateway ($HTTP_CODE) — Cloudflare cannot reach origin (attempt $i)"
-            ENDPOINT_OK=2   # definitive failure, no point retrying
-            break
-            ;;
-        530)
-            fail "Origin not connected ($HTTP_CODE) — cloudflared not registered with edge (attempt $i)"
-            ENDPOINT_OK=2
-            break
-            ;;
-        *)
-            fail "Unexpected HTTP $HTTP_CODE from $PUBLIC_URL (attempt $i)"
-            ENDPOINT_OK=2
-            break
-            ;;
-    esac
+    WS_ERR=$("$PYTHON" - "$WS_URL" 2>&1 <<'PYEOF'
+import asyncio, sys
+try:
+    import websockets
+except ImportError:
+    print("websockets not installed — run: pip install websockets", file=sys.stderr)
+    sys.exit(2)
+
+async def check(url):
+    try:
+        async with websockets.connect(url, open_timeout=8, close_timeout=4) as ws:
+            pass   # handshake succeeded — close immediately
+    except Exception as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
+
+asyncio.run(check(sys.argv[1]))
+PYEOF
+    )
+    WS_EXIT=$?
+
+    if [ $WS_EXIT -eq 0 ]; then
+        ok "WebSocket handshake succeeded (attempt $i)"
+        ENDPOINT_OK=1
+        break
+    elif [ $WS_EXIT -eq 2 ]; then
+        fail "websockets library missing — run: pip install 'websockets>=12'"
+        ENDPOINT_OK=2
+        break
+    else
+        if [ $i -eq 1 ]; then echo "     waiting for endpoint..."; fi
+        [ -n "$WS_ERR" ] && echo "     attempt $i: $WS_ERR"
+        sleep 3
+    fi
 done
-[ $ENDPOINT_OK -eq 0 ] && fail "No response from $PUBLIC_URL after 30s"
+[ $ENDPOINT_OK -eq 0 ] && fail "WebSocket handshake failed after 30s ($WS_URL)"
 
 echo "────────────────────────────────────────"
 if [ $FAIL -eq 0 ]; then
