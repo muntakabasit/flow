@@ -785,20 +785,29 @@ final class FlowWSClient {
 
     private var audioQueue: [Data] = []
 
-    private var retryCount    = 0
-    private var retryWorkItem: DispatchWorkItem?
+    private var retryCount       = 0
+    private var retryWorkItem:   DispatchWorkItem?
+    private var connectTimeout:  DispatchWorkItem?   // kills stuck .waiting connections
     // Fast window (attempts 1-5): tight retries for server restarts / brief drops.
     // Slow window (attempts 6+): exponential back-off for unstable networks.
     private static let fastDelays: [Double] = [0.5, 1.0, 1.0, 2.0, 2.0]
-    private static let maxRetries = 9    // fast(5) + slow(4) before saturation → 30s
+    private static let maxRetries     = 9    // fast(5) + slow(4) before saturation → 30s
+    private static let connectTimeoutS = 8.0 // force drop if NWConnection never resolves
 
     func connect() {
-        guard connState == .idle || connState == .dead else { return }
+        guard connState == .idle || connState == .dead || connState == .connecting else { return }
         retryWorkItem?.cancel()
         retryWorkItem = nil
+        connectTimeout?.cancel()
+        connectTimeout = nil
+
+        // Explicitly cancel and discard old connection before replacing.
+        // Prevents deferred .cancelled events from the old conn poisoning the new one.
+        conn?.cancel()
+        conn = nil
         connState = .connecting
-        print("[WS] connecting → \(url)")
-        print("Connecting to WebSocket:", url.absoluteString)
+
+        print("[WS] creating new connection → \(url)")
 
         // Force HTTP/1.1 in TLS ALPN — prevents HTTP/2 negotiation which breaks
         // WebSocket handshake through Cloudflare tunnels.
@@ -819,6 +828,17 @@ final class FlowWSClient {
         }
         conn?.start(queue: .main)
         receive()
+
+        // Watchdog: NWConnection can sit in .waiting indefinitely when Cloudflare
+        // edge is reachable but the origin is down. Force a drop after timeout so
+        // our retry loop stays alive.
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self, self.connState == .connecting else { return }
+            print("[WS] connect timeout (\(Int(Self.connectTimeoutS))s) — forcing drop")
+            self.handleDrop()
+        }
+        connectTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.connectTimeoutS, execute: timeout)
     }
 
     func connectIfNeeded() {
@@ -885,18 +905,29 @@ final class FlowWSClient {
     private func handleState(_ state: NWConnection.State) {
         switch state {
         case .ready:
+            connectTimeout?.cancel()
+            connectTimeout = nil
             connState = .open
             retryCount = 0
             retryWorkItem?.cancel()
             retryWorkItem = nil
-            print("[FLOW] Server connected — ready")
+            print("[WS] connect success — socket open")
             onConnect?()
             let q = audioQueue; audioQueue = []
             q.forEach { transmitAudio($0) }
+        case .waiting(let err):
+            // NWConnection waits indefinitely when Cloudflare edge is up but origin is down.
+            // Our connect timeout watchdog will catch this after connectTimeoutS seconds.
+            // Log it so we can see it in proof logs.
+            print("[WS] NWConnection waiting: \(err.localizedDescription) — timeout watchdog armed")
         case .failed(let err):
             print("[WS] connection failed: \(err.localizedDescription)")
+            connectTimeout?.cancel()
+            connectTimeout = nil
             handleDrop()
         case .cancelled:
+            connectTimeout?.cancel()
+            connectTimeout = nil
             if connState != .dead { handleDrop() }
         default:
             break
@@ -905,12 +936,11 @@ final class FlowWSClient {
 
     private func handleDrop() {
         guard connState != .dead else { return }
-        if connState == .connecting {
-            print("[WS] failed to connect")
-        } else {
-            print("[WS] disconnected")
-        }
+        connectTimeout?.cancel()
+        connectTimeout = nil
+        print("[WS] \(connState == .connecting ? "failed to connect" : "disconnected")")
         connState = .dead
+        conn?.cancel()   // explicit cancel — prevents deferred .cancelled poisoning new conn
         conn = nil
         audioQueue.removeAll()
         onDisconnect?()
@@ -922,9 +952,12 @@ final class FlowWSClient {
             onGiveUp?()
         }
         let delay = Self.retryDelay(for: retryCount)
-        print("[WS] retry \(retryCount) in \(delay)s")
+        print("[WS] retry attempt \(retryCount) in \(delay)s")
         let item = DispatchWorkItem { [weak self] in
-            guard let self, self.connState == .dead else { return }
+            guard let self else { return }
+            // Allow retry from .dead (normal) or .connecting (stuck .waiting that
+            // was force-dropped by timeout). connect() will cancel old conn safely.
+            guard self.connState == .dead || self.connState == .connecting else { return }
             self.connect()
         }
         retryWorkItem = item
@@ -941,10 +974,11 @@ final class FlowWSClient {
 
     /// Cancel pending retry and reconnect immediately.
     /// Called when user taps mic while reconnecting — bypasses timer.
+    /// Works from .dead (normal retry) or .connecting (stuck in .waiting).
     func reconnectNow() {
         retryWorkItem?.cancel()
         retryWorkItem = nil
-        guard connState == .dead else { return }
+        guard connState == .dead || connState == .connecting else { return }
         connect()
     }
 
