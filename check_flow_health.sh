@@ -8,8 +8,8 @@
 #
 # Check 3 pass criteria:
 #   101 — WebSocket upgrade accepted (full success)
-#   400 — Server responded and rejected curl's headers (server IS alive;
-#          curl cannot complete a real WS handshake — 400 is expected)
+#   400 — Server rejected curl's WS headers (server IS alive; curl can't WS)
+#   426 — Upgrade Required (server alive, signalling WS-only endpoint)
 #
 # Check 3 fail criteria:
 #   000 — No TCP response (DNS or network unreachable)
@@ -29,7 +29,7 @@ set -uo pipefail
 
 PORT=8765
 TUNNEL_NAME="flow"
-PUBLIC_URL="https://flow.flowbasit.com"
+PUBLIC_URL="https://flow.flowbasit.com/ws"
 PASS=0
 FAIL=0
 
@@ -65,7 +65,7 @@ else
 fi
 
 # 3. Public endpoint — retry up to 30s (3s intervals)
-echo "3. Endpoint $PUBLIC_URL/ws"
+echo "3. Endpoint $PUBLIC_URL"
 ENDPOINT_OK=0
 for i in $(seq 1 10); do
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
@@ -76,7 +76,7 @@ for i in $(seq 1 10); do
         -H "Sec-WebSocket-Version: 13" \
         "$PUBLIC_URL/ws" 2>/dev/null || echo "000")
     case "$HTTP_CODE" in
-        101|400)
+        101|400|426)
             ok "Reachable — HTTP $HTTP_CODE (attempt $i)"
             ENDPOINT_OK=1
             break
