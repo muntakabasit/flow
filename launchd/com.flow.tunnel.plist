@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+    <!-- Unique reverse-DNS label -->
+    <key>Label</key>
+    <string>com.flow.tunnel</string>
+
+    <!-- Call cloudflared directly (not start_flow_tunnel.sh).
+         Reason: the script has an idempotency guard that exits 0 when the
+         tunnel is already running. A 0 exit with KeepAlive: {SuccessfulExit: false}
+         would cause launchd to stop monitoring the job permanently.
+         Calling cloudflared directly keeps launchd in full control of the process.
+         Verify path on Mac mini: which cloudflared -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/cloudflared</string>
+        <string>tunnel</string>
+        <string>run</string>
+        <string>flow</string>
+    </array>
+
+    <!-- No WorkingDirectory needed — cloudflared reads ~/.cloudflared/config.yml -->
+
+    <!-- Start immediately on load / login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart on crash (nonzero exit). Clean exit = intentional stop. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Minimum gap between restarts -->
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Volumes/homelab/Storage/ofa_jack_agent/flow/logs/launchd_tunnel.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Volumes/homelab/Storage/ofa_jack_agent/flow/logs/launchd_tunnel.log</string>
+
+</dict>
+</plist>
