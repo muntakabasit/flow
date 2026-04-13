@@ -4,52 +4,47 @@
 <plist version="1.0">
 <dict>
 
-    <!-- Unique reverse-DNS label — used by launchctl to address this job -->
     <key>Label</key>
     <string>com.flow.server</string>
 
-    <!-- Call the canonical script (foreground — no --bg flag).
-         exec inside the script replaces the shell with python3, so launchd
-         directly tracks the python3 process and its exit code. -->
+    <!-- Points to ~/.flow/launch_server.sh — internal SSD, always available.
+         The wrapper waits for /Volumes/homelab to mount, then delegates to
+         the canonical start_flow_server.sh on the external volume.
+         HOMEPLACEHOLDER is substituted with $HOME by install_launchd.sh. -->
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Volumes/homelab/Storage/ofa_jack_agent/flow/start_flow_server.sh</string>
+        <string>HOMEPLACEHOLDER/.flow/launch_server.sh</string>
     </array>
 
-    <!-- Required: server_local.py uses relative imports/paths at startup -->
-    <key>WorkingDirectory</key>
-    <string>/Volumes/homelab/Storage/ofa_jack_agent/flow</string>
+    <!-- No WorkingDirectory — launch_server.sh cds into the repo after
+         the volume is confirmed mounted. start_flow_server.sh also cds. -->
 
-    <!-- Extend PATH so the script finds python3 under Homebrew.
-         launchd's default PATH is /usr/bin:/bin:/usr/sbin:/sbin only. -->
+    <!-- Homebrew python3 must be on PATH for the server to start -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 
-    <!-- Start immediately when the agent is loaded / user logs in -->
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- Restart only on nonzero exit (crash/error).
-         Clean exit (0) means intentional stop — do not restart. -->
     <key>KeepAlive</key>
     <dict>
         <key>SuccessfulExit</key>
         <false/>
     </dict>
 
-    <!-- Minimum seconds between automatic restarts — prevents crash loops -->
     <key>ThrottleInterval</key>
     <integer>30</integer>
 
-    <!-- stdout and stderr both go to the same log file for simplicity -->
+    <!-- Home-dir log — must be on internal SSD so launchd can open the fd
+         before /Volumes/homelab is mounted. HOMEPLACEHOLDER → real $HOME. -->
     <key>StandardOutPath</key>
-    <string>/Volumes/homelab/Storage/ofa_jack_agent/flow/logs/launchd_server.log</string>
+    <string>HOMEPLACEHOLDER/.flow/launchd_server.log</string>
     <key>StandardErrorPath</key>
-    <string>/Volumes/homelab/Storage/ofa_jack_agent/flow/logs/launchd_server.log</string>
+    <string>HOMEPLACEHOLDER/.flow/launchd_server.log</string>
 
 </dict>
 </plist>

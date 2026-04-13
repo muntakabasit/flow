@@ -4,16 +4,12 @@
 <plist version="1.0">
 <dict>
 
-    <!-- Unique reverse-DNS label -->
     <key>Label</key>
     <string>com.flow.tunnel</string>
 
-    <!-- Call cloudflared directly (not start_flow_tunnel.sh).
-         Reason: the script has an idempotency guard that exits 0 when the
-         tunnel is already running. A 0 exit with KeepAlive: {SuccessfulExit: false}
-         would cause launchd to stop monitoring the job permanently.
-         Calling cloudflared directly keeps launchd in full control of the process.
-         Verify path on Mac mini: which cloudflared -->
+    <!-- cloudflared binary on internal SSD (Homebrew) — no volume dependency.
+         Reads tunnel config from ~/.cloudflared/config.yml (home dir, always available).
+         Path must match: which cloudflared on the Mac mini. -->
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/cloudflared</string>
@@ -22,27 +18,26 @@
         <string>flow</string>
     </array>
 
-    <!-- No WorkingDirectory needed — cloudflared reads ~/.cloudflared/config.yml -->
+    <!-- No WorkingDirectory — cloudflared reads ~/.cloudflared/config.yml directly -->
 
-    <!-- Start immediately on load / login -->
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- Restart on crash (nonzero exit). Clean exit = intentional stop. -->
     <key>KeepAlive</key>
     <dict>
         <key>SuccessfulExit</key>
         <false/>
     </dict>
 
-    <!-- Minimum gap between restarts -->
     <key>ThrottleInterval</key>
     <integer>15</integer>
 
+    <!-- Home-dir log — no volume dependency.
+         HOMEPLACEHOLDER → real $HOME via install_launchd.sh. -->
     <key>StandardOutPath</key>
-    <string>/Volumes/homelab/Storage/ofa_jack_agent/flow/logs/launchd_tunnel.log</string>
+    <string>HOMEPLACEHOLDER/.flow/launchd_tunnel.log</string>
     <key>StandardErrorPath</key>
-    <string>/Volumes/homelab/Storage/ofa_jack_agent/flow/logs/launchd_tunnel.log</string>
+    <string>HOMEPLACEHOLDER/.flow/launchd_tunnel.log</string>
 
 </dict>
 </plist>
