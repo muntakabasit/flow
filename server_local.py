@@ -1395,21 +1395,39 @@ _PT_UNIQUE: frozenset = frozenset([
 ])
 
 
-def _is_noop_output(text: str, source_lang: str) -> bool:
-    """Return True if LLM output appears to be in the SAME language as source.
+def _is_noop_output(input_text: str, output_text: str, source_lang: str, target_lang: str) -> bool:
+    """Return True if LLM output is a no-op (wrong language or structurally identical to input).
 
-    Uses a lightweight word-marker heuristic — no external model required.
-    Threshold: 2+ English-unique markers OR 1+ Portuguese-unique marker.
-    Short texts (< 3 words) are excluded — too small to judge reliably.
+    Three detection strategies (any one triggers no-op):
+      1. Lexical similarity  — token-overlap ratio >= 0.8 vs input (LLM echoed the source).
+      2. Direction mismatch  — output contains language markers belonging to source, not target.
+      3. Short-sentence trap — < 3 output tokens but >= 2 shared with input (tiny echo).
     """
-    words = re.findall(r"\b\w+\b", text.lower())
-    if len(words) < 3:
+    out_words = re.findall(r"\b\w+\b", output_text.lower())
+    inp_words = re.findall(r"\b\w+\b", input_text.lower())
+
+    if not out_words:
         return False
-    word_set = set(words)
-    if source_lang.startswith("en"):
-        return len(word_set & _EN_UNIQUE) >= 2   # 2+ EN markers in EN-source → no-op
-    if source_lang.startswith("pt"):
-        return len(word_set & _PT_UNIQUE) >= 1   # 1+ PT marker in PT-source → no-op
+
+    out_set = set(out_words)
+    inp_set = set(inp_words)
+
+    # Strategy 1: lexical similarity — Jaccard-like ratio on token sets
+    if inp_set:
+        overlap_ratio = len(out_set & inp_set) / max(len(out_set), len(inp_set))
+        if overlap_ratio >= 0.8:
+            return True
+
+    # Strategy 3: short sentence — fewer than 3 tokens but 2+ shared with input
+    if len(out_words) < 3 and len(out_set & inp_set) >= 2:
+        return True
+
+    # Strategy 2: direction mismatch — output language markers contradict target
+    if target_lang.startswith("pt") and len(out_set & _EN_UNIQUE) >= 2:
+        return True   # expected PT, output contains EN markers
+    if target_lang.startswith("en") and len(out_set & _PT_UNIQUE) >= 1:
+        return True   # expected EN, output contains PT markers
+
     return False
 
 
@@ -2645,17 +2663,15 @@ async def websocket_handler(client_ws: WebSocket):
                     # NO-OP GUARD: ensure LLM output is in target language, not source.
                     # The LLM can ignore direction hints and echo source text despite a
                     # correct prompt — this guard catches and corrects that failure.
-                    if full_translation.strip() and _is_noop_output(full_translation, active_lang):
+                    if full_translation.strip() and _is_noop_output(
+                        interpretation, full_translation, active_lang, target_lang
+                    ):
                         _tgt_name = "Portuguese" if active_lang.startswith("en") else "English"
                         _src_name = "English"    if active_lang.startswith("en") else "Portuguese"
-                        log(
-                            f"[flow-local] [NO-OP DETECTED] source={active_lang} "
-                            f"output appears to be {_src_name} — retrying with stronger instruction"
-                        )
+                        log(f"[translation_guard] noop_detected → retry text=\"{full_translation.strip()[:80]}\"")
                         _retry_instr = (
-                            f"CRITICAL OVERRIDE: Your output MUST be in {_tgt_name} only. "
-                            f"Do NOT output {_src_name} under any circumstances. "
-                            f"Translate into {_tgt_name} now."
+                            f"Translate strictly into {_tgt_name}. "
+                            f"Do NOT repeat input. Output must be natural and fluent."
                         )
                         full_translation, target_lang, *_ = await translate_and_stream_tts(
                             interpretation, active_lang,
@@ -2664,11 +2680,8 @@ async def websocket_handler(client_ws: WebSocket):
                             conv_ctx,
                             extra_instruction=_retry_instr,
                         )
-                        if _is_noop_output(full_translation, active_lang):
-                            log(
-                                f"[flow-local] [NO-OP BLOCKED] source={active_lang} "
-                                f"retry still {_src_name} — turn suppressed"
-                            )
+                        if _is_noop_output(interpretation, full_translation, active_lang, target_lang):
+                            log(f"[translation_guard] noop_detected → dropped text=\"{full_translation.strip()[:80]}\"")
                             full_translation = ""   # blocks translation_done + ctx update
 
                     # 4. Send final text (voice-first: text after audio started)
