@@ -1680,6 +1680,13 @@ async def translate_and_stream_tts(
 
     Returns: (full_translation, target_lang, llm_ms, tts_first_audio_ms, tts_total_ms, llm_ttft_ms)
     """
+    # INTENT CLEAN — choke-point: every translation path passes through here.
+    # Runs before direction choice, prompt build, or any streaming logic.
+    _intent_cleaned = _clean_intent_text(text, source_language)
+    if _intent_cleaned != text:
+        log(f"[intent_clean] raw='{text}' → cleaned='{_intent_cleaned}'")
+    text = _intent_cleaned
+
     source_norm, target_lang, direction_hint, no_op = _choose_translation_direction(
         source_language, target_lang_override
     )
@@ -2695,18 +2702,13 @@ async def websocket_handler(client_ws: WebSocket):
                     if turn_lane == 'B':
                         interpretation = await clarify_transcript(interpretation, active_lang)
 
-                    # INTENT CLEAN: strip fillers/repetition before LLM sees text.
-                    # Runs independently of the internal cleanup inside translate_and_stream_tts
-                    # so the cleaned form is visible in logs and governs the noop guard input.
-                    cleaned_intent = _clean_intent_text(interpretation, active_lang)
-                    log(f"[intent_clean] raw='{interpretation}' → cleaned='{cleaned_intent}'")
-
                     # 2+3. Streaming translate + TTS (overlapped)
+                    # Intent cleaning runs inside translate_and_stream_tts (choke-point).
                     barge_in_event.clear()
                     is_playing_tts = True
                     full_translation, target_lang, llm_ms, tts_first_ms, tts_total_ms, llm_ttft_ms = \
                         await translate_and_stream_tts(
-                            cleaned_intent, active_lang,   # filler-stripped intent text
+                            interpretation, active_lang,   # rescued text — intent-cleaned inside
                             preferred_target_lang if lock_target_lang else None,
                             client_ws, loop, turn_count, barge_in_event,
                             conv_ctx,   # CONTROLLED_CONTEXT_V1: pronoun/topic anchor
@@ -2716,7 +2718,7 @@ async def websocket_handler(client_ws: WebSocket):
                     # The LLM can ignore direction hints and echo source text despite a
                     # correct prompt — this guard catches and corrects that failure.
                     if full_translation.strip() and _is_noop_output(
-                        cleaned_intent, full_translation, active_lang, target_lang
+                        interpretation, full_translation, active_lang, target_lang
                     ):
                         _tgt_name = "Portuguese" if active_lang.startswith("en") else "English"
                         _src_name = "English"    if active_lang.startswith("en") else "Portuguese"
@@ -2726,13 +2728,13 @@ async def websocket_handler(client_ws: WebSocket):
                             f"Do NOT repeat input. Output must be natural and fluent."
                         )
                         full_translation, target_lang, *_ = await translate_and_stream_tts(
-                            cleaned_intent, active_lang,
+                            interpretation, active_lang,
                             preferred_target_lang if lock_target_lang else None,
                             client_ws, loop, turn_count, barge_in_event,
                             conv_ctx,
                             extra_instruction=_retry_instr,
                         )
-                        if _is_noop_output(cleaned_intent, full_translation, active_lang, target_lang):
+                        if _is_noop_output(interpretation, full_translation, active_lang, target_lang):
                             log(f"[translation_guard] noop_detected → dropped text=\"{full_translation.strip()[:80]}\"")
                             full_translation = ""   # blocks translation_done + ctx update
 
