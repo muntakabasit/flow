@@ -2554,6 +2554,7 @@ async def websocket_handler(client_ws: WebSocket):
                                 lang_switch_counter = 1
                                 active_lang = normalized_lang
                                 switch_reason = "language_candidate_detected"
+                                log(f"[lang_switch] from={stable_lang} to={normalized_lang} conf={stt_confidence:.2f}")
                             else:
                                 lang_switch_counter = 0  # don't start counter on low-conf
                                 active_lang = stable_lang
@@ -2575,12 +2576,14 @@ async def websocket_handler(client_ws: WebSocket):
                             if lang_switch_counter >= LANGUAGE_SWITCH_HYSTERESIS:
                                 # Check cooldown: allow very high confidence to override
                                 if turns_since_switch >= LANGUAGE_SWITCH_COOLDOWN or stt_confidence >= 0.95:
+                                    _prev_stable = stable_lang
                                     stable_lang = normalized_lang
                                     active_lang = normalized_lang
                                     candidate_lang = None
                                     lang_switch_counter = 0
                                     turns_since_switch = 0
                                     switch_reason = "hysteresis_satisfied"
+                                    log(f"[lang_switch] from={_prev_stable} to={stable_lang} conf={stt_confidence:.2f}")
                                     log(f"[flow-local] Language switched to {stable_lang} (cooldown ok)")
                                 else:
                                     # Still in cooldown period
@@ -2594,6 +2597,7 @@ async def websocket_handler(client_ws: WebSocket):
                                 # uncertain signal holds stable direction until hysteresis done.
                                 if stt_confidence >= MIN_CONFIDENCE_SWITCH:
                                     active_lang = normalized_lang
+                                    log(f"[lang_switch] from={stable_lang} to={normalized_lang} conf={stt_confidence:.2f}")
                                 else:
                                     active_lang = stable_lang
                                 switch_reason = f"hysteresis_pending ({lang_switch_counter}/{LANGUAGE_SWITCH_HYSTERESIS})"
