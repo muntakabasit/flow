@@ -128,9 +128,9 @@ ALLOWED_LANGS = ["en", "pt"]      # ONLY English and Portuguese (PT includes all
 LANGUAGE_SWITCH_HYSTERESIS = 3    # require 3 consecutive same-language detections before stable switch (prevents single-turn flicker)
 LANGUAGE_SWITCH_COOLDOWN = 0      # no cooldown — interpreter must switch every turn
 MIN_CONFIDENCE_STT = 0.55         # ASCII rescue gate (kept for rescue chain guard)
-MIN_CONFIDENCE_SWITCH = 0.90      # require 0.90+ confidence to switch languages (hardened)
-                                   # Hysteresis counter also only increments at this threshold —
-                                   # a low-confidence detection cannot accumulate toward a switch.
+MIN_CONFIDENCE_SWITCH = 0.70      # minimum confidence to start/advance language switch hysteresis
+                                   # Lowered from 0.90 — switch allowed when detected_lang != current
+                                   # lang with confidence >= 0.70.
 CONF_LOW_CONFIDENCE_FLOOR = 0.60  # below this: low-quality signal — skip if short, log if long
 # 3-lane gate thresholds (spec-exact)
 CONF_STRONG_EN  = 0.55            # Lane A/B boundary — English
