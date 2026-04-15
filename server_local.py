@@ -2626,6 +2626,29 @@ async def websocket_handler(client_ws: WebSocket):
                             f" reason={switch_reason} text={text[:40]!r}"
                         )
 
+                    # TURN OWNERSHIP LOCK — P3.3
+                    # The session stability system above resolves active_lang using hysteresis
+                    # and cooldown. That is correct for session-level memory, but in push-to-talk
+                    # use each segment is its own speech act and should own its language when
+                    # the detection is confident.
+                    #
+                    # Rule: if this segment's detected language differs from what the session
+                    # system chose AND confidence >= MIN_CONFIDENCE_SWITCH, override active_lang
+                    # for this turn only. stable_lang / candidate_lang / hysteresis state are
+                    # NOT modified — session memory evolves at its own pace.
+                    _session_chosen = active_lang
+                    if (
+                        normalized_lang
+                        and normalized_lang != active_lang
+                        and stt_confidence >= MIN_CONFIDENCE_SWITCH
+                    ):
+                        active_lang = normalized_lang
+                    log(
+                        f"[turn_owner] segment_lang={normalized_lang or detected_lang}"
+                        f" session_lang={_session_chosen} chosen={active_lang}"
+                        f" conf={stt_confidence:.2f}"
+                    )
+
                     # Optional manual source override from client settings
                     if preferred_source_lang:
                         log(
