@@ -2562,6 +2562,7 @@ async def websocket_handler(client_ws: WebSocket):
                             active_lang = normalized_lang
                             switch_reason = "initial_detection"
                             log(f"[flow-local] Language initialized: {stable_lang} (detected: {detected_lang})")
+                            log(f"[session_lock] stable_lang={stable_lang}")
                         else:
                             # Unsupported language on first detection
                             log(f"[flow-local] Unsupported language on first detection: {detected_lang}, waiting for supported lang")
@@ -2606,13 +2607,15 @@ async def websocket_handler(client_ws: WebSocket):
                                 # Check cooldown: allow very high confidence to override
                                 if turns_since_switch >= LANGUAGE_SWITCH_COOLDOWN or stt_confidence >= 0.95:
                                     _prev_stable = stable_lang
-                                    stable_lang = normalized_lang
-                                    active_lang = normalized_lang
+                                    if normalized_lang:   # guard: never revert stable_lang to None
+                                        stable_lang = normalized_lang
+                                    active_lang = stable_lang
                                     candidate_lang = None
                                     lang_switch_counter = 0
                                     turns_since_switch = 0
                                     switch_reason = "hysteresis_satisfied"
                                     log(f"[lang_switch] from={_prev_stable} to={stable_lang} conf={stt_confidence:.2f}")
+                                    log(f"[session_lock] stable_lang={stable_lang}")
                                     log(f"[flow-local] Language switched to {stable_lang} (cooldown ok)")
                                 else:
                                     # Still in cooldown period
