@@ -1102,6 +1102,19 @@ def _looks_like_english(text: str) -> bool:
     return bool(words & _EN_DISCRIMINATING_WORDS)
 
 
+def _text_clearly_english(text: str) -> bool:
+    """True if text contains >= 2 unambiguous English words and zero PT-unique markers.
+
+    Used as a post-STT sanity guard: if Whisper labels audio as pt but the
+    transcript is clearly English, the label is overridden before routing.
+
+    Relies on _EN_DISCRIMINATING_WORDS (high-signal English function words) and
+    _PT_UNIQUE (words that only appear in Portuguese).
+    """
+    words = set(re.sub(r"[^\w'\s]", "", text.lower()).split())
+    return len(words & _EN_DISCRIMINATING_WORDS) >= 2 and len(words & _PT_UNIQUE) == 0
+
+
 def _english_plausible_from_state(stable_lang: str | None, active_lang: str) -> bool:
     """True if the session is currently oriented toward English turns."""
     norm = normalize_lang(stable_lang) if stable_lang else None
@@ -2413,6 +2426,14 @@ async def websocket_handler(client_ws: WebSocket):
                         await client_ws.send_json({"type": "error", "code": "STT_FAILED", "message": "Could not understand speech"})
                         await client_ws.send_json({"type": "turn_complete", "skip_reason": "stt_exception"})
                         continue
+
+                    # P3.5 STT SANITY GUARD — correct obvious pt→en misclassification.
+                    # Whisper sometimes labels clear English as pt after a prior PT turn.
+                    # If transcript contains ≥2 English discriminating words and no PT
+                    # markers, trust the text over the label.
+                    if str(detected_lang).startswith("pt") and _text_clearly_english(text):
+                        log(f"[stt_override] from={detected_lang} to=en text=\"{text[:60]}\"")
+                        detected_lang = "en"
 
                     # ── 3-lane gate: fast Lane C ────────────────────────────
                     # Cheap checks that don't need the rescue chain.
