@@ -2383,6 +2383,13 @@ async def websocket_handler(client_ws: WebSocket):
                     #    Only pass manual user preference as Whisper language hint.
                     #    Do NOT pass stable_lang as forced_source_language — it would force-transcribe
                     #    echo as wrong language. Pass it separately for dual-transcription scoring bias.
+                    #
+                    # P3.4 TURN RESET: each fresh PTT segment is evaluated without session-language
+                    # bias so Whisper picks the language of THIS audio, not the prior session.
+                    # stable_lang is cleared from the bias slot (passed as None) while skip_dual
+                    # retains the performance optimization (True when session is established).
+                    # The session variable stable_lang is NOT modified — memory lives on.
+                    log(f"[turn_reset] prior_session_lang={stable_lang or 'none'} new_segment_started=1")
                     stt_start = time.monotonic()
                     pre_stt_ms = (stt_start - turn_start) * 1000
                     try:
@@ -2392,10 +2399,11 @@ async def websocket_handler(client_ws: WebSocket):
                                 transcribe_segment,
                                 speech_audio,
                                 preferred_source_lang,       # manual preference only (or None)
-                                stable_lang is not None,     # skip_dual: skip 3-pass when lang is known
-                                stable_lang,                 # scoring bias in dual-transcription candidate selection
+                                stable_lang is not None,     # skip_dual: True when session established
+                                None,                        # bias=None: no session tilt per fresh turn
                             )
                         stt_ms = (time.monotonic() - stt_start) * 1000
+                        log(f"[segment_detect] detected={detected_lang} conf={stt_confidence:.2f} prior_session={stable_lang or 'none'}")
                         log(f"[flow-local] STT ({stt_ms:.0f}ms): [{detected_lang}] confidence={stt_confidence:.2f} text='{text}'")
                     except Exception as e:
                         stt_ms = (time.monotonic() - stt_start) * 1000
