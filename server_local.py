@@ -1120,18 +1120,36 @@ def _is_incomplete_thought(text: str) -> bool:
 
     Lightweight heuristic — no LLM, no parsing.
     Checks applied (in order):
-      1. Very short fragment: <= 2 words (e.g. "How I", "What")
+      1. Empty input
       2. Trailing hesitation: ends with ellipsis, dash, or audible filler
-    Falls through to False for clean complete inputs.
+      3. <= 2 words AND the last word is an unfinished-sentence starter
+         (question words, subject pronouns, conjunctions left hanging)
+
+    NOT triggered by short but complete sentences:
+      "What happened?" ✅  "What's up?" ✅  "I'm okay." ✅  "Thank you." ✅
+    IS triggered by dangling fragments:
+      "How I…" ✅  "What…" ✅  "Because…" ✅  "I'm…" ✅
     """
     t = text.strip().lower()
     words = t.split()
 
-    if len(words) <= 2:
+    if not words:
         return True
 
+    # Trailing hesitation / obvious unfinished endings
     if t.endswith(("...", "-", "uh", "um", "er")):
         return True
+
+    # Very short fragments — only hold when last word looks unfinished
+    if len(words) <= 2:
+        _unfinished_starters = {
+            "how", "what", "why", "when", "where", "who",
+            "i", "i'm", "im", "we", "we're", "were",
+            "you", "youre", "you're", "they", "theyre", "they're",
+            "because", "if", "so", "then", "but", "and",
+        }
+        if words[-1] in _unfinished_starters:
+            return True
 
     return False
 
