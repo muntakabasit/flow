@@ -2558,9 +2558,9 @@ async def websocket_handler(client_ws: WebSocket):
                     # must NOT weaken the established session. Fall back to stable_lang so
                     # hysteresis and turn_owner see a valid language, not None.
                     # Strong opposing signals still override via turn_owner (no conflict).
-                    if session_locked and not normalized_lang:
+                    if session_locked and normalized_lang is None:
                         normalized_lang = stable_lang
-                    log(f"[session_memory] locked={session_locked} stable={stable_lang}")
+                    log(f"[session_lock] locked={session_locked} stable={stable_lang} normalized={normalized_lang}")
 
                     switch_reason = None
                     active_lang = stable_lang if stable_lang else normalized_lang
@@ -2570,6 +2570,7 @@ async def websocket_handler(client_ws: WebSocket):
                         if normalized_lang:  # Only set if it's a supported language
                             stable_lang = normalized_lang
                             session_locked = True
+                            assert stable_lang is not None
                             active_lang = normalized_lang
                             switch_reason = "initial_detection"
                             log(f"[flow-local] Language initialized: {stable_lang} (detected: {detected_lang})")
@@ -2621,6 +2622,7 @@ async def websocket_handler(client_ws: WebSocket):
                                     if normalized_lang:   # guard: never revert stable_lang to None
                                         stable_lang = normalized_lang
                                         session_locked = True
+                                        assert stable_lang is not None
                                     active_lang = stable_lang
                                     candidate_lang = None
                                     lang_switch_counter = 0
