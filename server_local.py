@@ -1603,6 +1603,42 @@ def _clean_intent_text(text: str, source_lang: str = "en") -> str:
     return cleaned
 
 
+# ---------------------------------------------------------------------------
+# D1.2 — Tone & Meaning Alignment
+# Post-translation conversational upgrade. Rule-based pattern table ONLY.
+# No semantic rewriting. Applied at handler choke-point after translation
+# resolves (first call or retry), before TTS + translation_done emission.
+# ---------------------------------------------------------------------------
+
+def _naturalize_output(text: str, target_lang: str) -> str:
+    """Rewrite stiff/literal LLM output into natural conversational form.
+
+    Pattern-based mapping only — no LLM, no semantic interpretation.
+    Only fires on exact normalised matches (case-insensitive, trimmed).
+    Falls through unchanged for anything not in the table.
+    """
+    if not text:
+        return text
+    t = text.strip()
+    key = t.lower()
+
+    if target_lang.startswith("pt"):
+        if key in ("tudo bem.", "tudo bem"):
+            return "tô bem."
+        if key in ("e aí?", "e ai?", "e aí", "e ai"):
+            return "e aí, tudo bem?"
+        if key in ("qual é o seu nome?", "qual e o seu nome?"):
+            return "como você se chama?"
+
+    if target_lang.startswith("en"):
+        if key in ("i am.", "i am"):
+            return "I'm here."
+        if key in ("what?",):
+            return "what do you mean?"
+
+    return text
+
+
 def _choose_translation_direction(source_language, forced_target_language=None):
     """Return (source_norm, target_lang, direction_hint, no_op)."""
     source_norm = _norm_lang(source_language) or "en"
@@ -2884,6 +2920,16 @@ async def websocket_handler(client_ws: WebSocket):
                         if _is_noop_output(interpretation, full_translation, active_lang, target_lang):
                             log(f"[translation_guard] noop_detected → dropped text=\"{full_translation.strip()[:80]}\"")
                             full_translation = ""   # blocks translation_done + ctx update
+
+                    # D1.2 — Tone & Meaning Alignment (choke-point)
+                    # Naturalize stiff/literal output into conversational form.
+                    # Runs after translation resolves (first call or retry),
+                    # before TTS finalisation + text emission.
+                    if full_translation and full_translation.strip():
+                        _raw = full_translation
+                        full_translation = _naturalize_output(full_translation, target_lang)
+                        if full_translation != _raw:
+                            log(f"[naturalize] raw=\"{_raw.strip()[:80]}\" → final=\"{full_translation.strip()[:80]}\"")
 
                     # 4. Send final text (voice-first: text after audio started)
                     if full_translation.strip():
