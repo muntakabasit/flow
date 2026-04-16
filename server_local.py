@@ -2727,6 +2727,11 @@ async def websocket_handler(client_ws: WebSocket):
             if pending_vad_segment is not None and pending_vad_deadline is not None:
                 remaining_s = pending_vad_deadline - time.monotonic()
                 if remaining_s <= 0:
+                    if _force_release:
+                        log("[turn_guard] debounce expired but force_release already handled")
+                        pending_vad_segment = None
+                        pending_vad_deadline = None
+                        continue
                     segment_to_commit = pending_vad_segment
                     pending_vad_segment = None
                     pending_vad_deadline = None
@@ -2735,6 +2740,11 @@ async def websocket_handler(client_ws: WebSocket):
                 try:
                     raw = await asyncio.wait_for(client_ws.receive(), timeout=remaining_s)
                 except asyncio.TimeoutError:
+                    if _force_release:
+                        log("[turn_guard] debounce expired but force_release already handled")
+                        pending_vad_segment = None
+                        pending_vad_deadline = None
+                        continue
                     segment_to_commit = pending_vad_segment
                     pending_vad_segment = None
                     pending_vad_deadline = None
@@ -2887,12 +2897,13 @@ async def websocket_handler(client_ws: WebSocket):
 
                 _force_release = True
                 last_audio_time = time.monotonic()
-                # Cancel any pending VAD debounce — explicit release supersedes it.
+                # Hard-clear all pending VAD state — explicit release supersedes debounce.
+                # Carry any buffered audio into carryover so it joins the force_finalize segment.
                 if pending_vad_segment is not None:
                     carryover_segment = pending_vad_segment if carryover_segment is None else np.concatenate([carryover_segment, pending_vad_segment])
-                    pending_vad_segment = None
-                    pending_vad_deadline = None
                     log("[turn_hold] cancelled → explicit orb release")
+                pending_vad_segment = None
+                pending_vad_deadline = None
                 events = vad.force_finalize()
 
                 # Guard: orb released before VAD detected speech onset (very quick tap).
@@ -2970,7 +2981,12 @@ async def websocket_handler(client_ws: WebSocket):
                         speech_audio = np.concatenate([carryover_segment, speech_audio])
                         carryover_segment = None
 
+                    # HARD GUARD — explicit orb release already owns this turn.
+                    # Suppress VAD commit, clear any residual pending state.
                     if _force_release:
+                        log("[turn_guard] skip vad commit due to force_release")
+                        pending_vad_segment = None
+                        pending_vad_deadline = None
                         await _commit_segment(speech_audio, "force_release", segment_duration_ms)
                         continue
 
