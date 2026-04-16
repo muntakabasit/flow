@@ -2110,6 +2110,7 @@ async def websocket_handler(client_ws: WebSocket):
 
     # Language stability state
     stable_lang = None              # current stable language (None = not yet detected, normalized to "en" or "pt-BR")
+    session_locked = False          # True once stable_lang is first established; prevents unsupported detections from clearing session memory
     lang_switch_counter = 0         # consecutive detections of a candidate language
     candidate_lang = None           # language we're considering switching to
     turns_since_switch = 0          # cooldown counter after language switch
@@ -2552,6 +2553,15 @@ async def websocket_handler(client_ws: WebSocket):
                     # Normalize detected language to canonical form (en or pt-BR)
                     normalized_lang = normalize_lang(detected_lang)
 
+                    # SESSION MEMORY LOCK — P3.4 refined
+                    # Once session_locked, an unsupported/unknown detection (normalized_lang=None)
+                    # must NOT weaken the established session. Fall back to stable_lang so
+                    # hysteresis and turn_owner see a valid language, not None.
+                    # Strong opposing signals still override via turn_owner (no conflict).
+                    if session_locked and not normalized_lang:
+                        normalized_lang = stable_lang
+                    log(f"[session_memory] locked={session_locked} stable={stable_lang}")
+
                     switch_reason = None
                     active_lang = stable_lang if stable_lang else normalized_lang
 
@@ -2559,6 +2569,7 @@ async def websocket_handler(client_ws: WebSocket):
                     if stable_lang is None:
                         if normalized_lang:  # Only set if it's a supported language
                             stable_lang = normalized_lang
+                            session_locked = True
                             active_lang = normalized_lang
                             switch_reason = "initial_detection"
                             log(f"[flow-local] Language initialized: {stable_lang} (detected: {detected_lang})")
@@ -2609,6 +2620,7 @@ async def websocket_handler(client_ws: WebSocket):
                                     _prev_stable = stable_lang
                                     if normalized_lang:   # guard: never revert stable_lang to None
                                         stable_lang = normalized_lang
+                                        session_locked = True
                                     active_lang = stable_lang
                                     candidate_lang = None
                                     lang_switch_counter = 0
