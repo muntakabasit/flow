@@ -876,7 +876,7 @@ final class FlowWSClient {
             print("[WS] sendEndOfUtterance — not open (state=\(connState)), dropping")
             return false
         }
-        send(["type": "speech_stopped"])
+        send(["type": "orb_released"])
         return true
     }
 
