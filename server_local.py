@@ -2869,12 +2869,14 @@ async def websocket_handler(client_ws: WebSocket):
                 })
                 continue
 
-            # Three-way dispatch: release signal | unknown | audio
+            # Four-way dispatch: explicit orb release | VAD silence signal | unknown | audio
+            # STRICT RULE: _force_release is True ONLY when msg_type == "orb_released".
+            # VAD-generated "speech_stopped" messages NEVER set _force_release.
             events = []
-            if msg_type == "speech_stopped":
-                # Guard: ignore release before any audio has arrived this session.
-                # Happens when client sends speech_stopped during WS handshake before
-                # the session is fully settled (flow.ready → mode_confirmed → first chunk).
+            if msg_type == "orb_released":
+                # ── Explicit UI action: user lifted finger off the orb ──────────────────
+                # Commit immediately — no debounce wait.
+                log("[release_signal] explicit_orb_release")
                 if chunks_received == 0:
                     log("[flow-local] ⚠️ Zero-chunk release — no audio yet, session not ready (ignored)")
                     await client_ws.send_json({
@@ -2883,18 +2885,17 @@ async def websocket_handler(client_ws: WebSocket):
                     })
                     continue
 
-                # Client released orb — finalize immediately, no silence wait
                 _force_release = True
                 last_audio_time = time.monotonic()
+                # Cancel any pending VAD debounce — explicit release supersedes it.
                 if pending_vad_segment is not None:
                     carryover_segment = pending_vad_segment if carryover_segment is None else np.concatenate([carryover_segment, pending_vad_segment])
                     pending_vad_segment = None
                     pending_vad_deadline = None
-                    log("[turn_hold] cancelled → explicit release")
+                    log("[turn_hold] cancelled → explicit orb release")
                 events = vad.force_finalize()
 
-                # Guard: release arrived but VAD was never in speaking state
-                # (orb released before VAD detected speech onset, e.g. very quick tap).
+                # Guard: orb released before VAD detected speech onset (very quick tap).
                 if not events:
                     if carryover_segment is not None:
                         segment_to_commit = carryover_segment
@@ -2908,7 +2909,19 @@ async def websocket_handler(client_ws: WebSocket):
                         "skip_reason": "release_no_speech",
                     })
                     continue
-                log(f"[flow-local] Release msg → force_finalize ({len(events)} event(s))")
+                log(f"[flow-local] orb_released → force_finalize ({len(events)} event(s))")
+
+            elif msg_type == "speech_stopped":
+                # ── VAD auto-silence: automatic end-of-speech detection ───────────────
+                # NOT an explicit user action. NEVER sets _force_release.
+                # Audio goes into the debounce queue; committed after TURN_COMMIT_DEBOUNCE_MS.
+                log("[release_signal] vad_silence")
+                last_audio_time = time.monotonic()
+                events = vad.force_finalize()
+                # If VAD produced no events (already idle), nothing to do.
+                if not events:
+                    continue
+
             elif msg_type != "audio":
                 continue
             else:
@@ -2972,15 +2985,13 @@ async def websocket_handler(client_ws: WebSocket):
                     # NO DIRECT PATH EXISTS BELOW THIS LINE.
 
                 elif event[0] == "speech_stopped_short":
+                    # VAD-only event — never an explicit release. Always debounce.
                     if carryover_segment is not None:
                         segment_to_commit = carryover_segment
                         carryover_segment = None
-                        if _force_release:
-                            await _commit_segment(segment_to_commit, "force_release")
-                        else:
-                            pending_vad_segment = segment_to_commit
-                            pending_vad_deadline = time.monotonic() + (TURN_COMMIT_DEBOUNCE_MS / 1000.0)
-                            log(f"[turn_hold] waiting {TURN_COMMIT_DEBOUNCE_MS}ms after VAD silence")
+                        pending_vad_segment = segment_to_commit
+                        pending_vad_deadline = time.monotonic() + (TURN_COMMIT_DEBOUNCE_MS / 1000.0)
+                        log(f"[turn_hold] waiting {TURN_COMMIT_DEBOUNCE_MS}ms after VAD silence (short)")
                         continue
                     log("[flow-local] Short sound ignored — returning client to ready")
                     await safe_send(client_ws, {
