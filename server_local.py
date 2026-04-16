@@ -1115,6 +1115,27 @@ def _text_clearly_english(text: str) -> bool:
     return len(words & _EN_DISCRIMINATING_WORDS) >= 2 and len(words & _PT_UNIQUE) == 0
 
 
+def _is_incomplete_thought(text: str) -> bool:
+    """Return True if text is likely a partial / incomplete speech fragment.
+
+    Lightweight heuristic — no LLM, no parsing.
+    Checks applied (in order):
+      1. Very short fragment: <= 2 words (e.g. "How I", "What")
+      2. Trailing hesitation: ends with ellipsis, dash, or audible filler
+    Falls through to False for clean complete inputs.
+    """
+    t = text.strip().lower()
+    words = t.split()
+
+    if len(words) <= 2:
+        return True
+
+    if t.endswith(("...", "-", "uh", "um", "er")):
+        return True
+
+    return False
+
+
 def _english_plausible_from_state(stable_lang: str | None, active_lang: str) -> bool:
     """True if the session is currently oriented toward English turns."""
     norm = normalize_lang(stable_lang) if stable_lang else None
@@ -2774,6 +2795,21 @@ async def websocket_handler(client_ws: WebSocket):
                     # Lane B: run clarification (no-op while CLARIFICATION_ENABLED=False)
                     if turn_lane == 'B':
                         interpretation = await clarify_transcript(interpretation, active_lang)
+
+                    # D1.1 TURN COMPLETION GUARD — must run AFTER rescue chain, BEFORE translation.
+                    # Compute cleaned form once here for the guard (same logic as choke-point
+                    # inside translate_and_stream_tts, cheap regex — no latency impact).
+                    _guard_text = _clean_intent_text(interpretation, active_lang)
+
+                    # Micro-delay for very short inputs: allow continuation before committing.
+                    if len(_guard_text.split()) < 3:
+                        await asyncio.sleep(0.15)
+
+                    if _is_incomplete_thought(_guard_text):
+                        log(f"[turn_hold] incomplete='{_guard_text}'")
+                        await client_ws.send_json({"type": "turn_complete", "skip_reason": "incomplete_thought"})
+                        turns_since_switch += 1
+                        continue
 
                     # 2+3. Streaming translate + TTS (overlapped)
                     # Intent cleaning runs inside translate_and_stream_tts (choke-point).
