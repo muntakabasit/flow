@@ -1174,6 +1174,25 @@ def _is_incomplete_thought(text: str) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# D1.3 — Micro Context Carry
+# One-step conversational continuity. Prepends prior clean meaning to the
+# current interpretation when the current is short or question-like, so the
+# LLM can resolve pronouns/topics implicitly. No memory, no chaining, no
+# extra API calls — just a single prior utterance join.
+# ---------------------------------------------------------------------------
+
+def _should_apply_context(prev: str, current: str) -> bool:
+    """Gate the context-carry merge. True → prepend prev to current."""
+    if not prev or not current:
+        return False
+
+    short_current  = len(current.split()) <= 4
+    question_like  = current.strip().endswith("?")
+
+    return short_current or question_like
+
+
 def _english_plausible_from_state(stable_lang: str | None, active_lang: str) -> bool:
     """True if the session is currently oriented toward English turns."""
     norm = normalize_lang(stable_lang) if stable_lang else None
@@ -2879,6 +2898,17 @@ async def websocket_handler(client_ws: WebSocket):
                         turns_since_switch += 1
                         continue
 
+                    # D1.3 — Micro Context Carry (one-step continuity)
+                    # Prepend prior clean meaning to short/question turns so the
+                    # LLM resolves pronouns/topics implicitly. No chaining — the
+                    # merged text does NOT feed back into conv_ctx; _orig_interpretation
+                    # is the untouched current turn, and that's what gets stored.
+                    _orig_interpretation = interpretation
+                    ctx_prev = conv_ctx.last_clean_meaning or ""
+                    if _should_apply_context(ctx_prev, interpretation):
+                        interpretation = f"{ctx_prev}. {interpretation}"
+                        log(f"[ctx_merge] prev='{ctx_prev[:40]}' + curr='{_orig_interpretation[:40]}'")
+
                     # 2+3. Streaming translate + TTS (overlapped)
                     # Intent cleaning runs inside translate_and_stream_tts (choke-point).
                     barge_in_event.clear()
@@ -2942,13 +2972,15 @@ async def websocket_handler(client_ws: WebSocket):
                         and stt_confidence >= CONF_LOW_CONFIDENCE_FLOOR
                         and normalize_lang(detected_lang) is not None
                         and bool(full_translation.strip())
-                        and bool(interpretation.strip())
+                        and bool(_orig_interpretation.strip())
                     )
                     if _ctx_eligible:
-                        # Store interpretation directly — it is already the rescue-chain
-                        # output (phonetic + slang + accent passes). Re-cleaning it would
-                        # corrupt short emotionally-loaded turns ("I hate this", "merda!").
-                        _ctx_meaning = interpretation
+                        # Store _orig_interpretation (pre-D1.3-merge rescue-chain output).
+                        # Using the post-merge `interpretation` would feed "prev. curr"
+                        # back into conv_ctx → chaining beyond 1 step (NON-NEGOTIABLE #4).
+                        # Rescue-chain output is already phonetic/slang/accent-normalised;
+                        # re-cleaning would corrupt short emotional turns ("merda!").
+                        _ctx_meaning = _orig_interpretation
                         conv_ctx.update(active_lang, target_lang, _ctx_meaning)
                         log(f"[flow-local] [ctx] updated: dir={conv_ctx.direction} meaning='{conv_ctx.last_clean_meaning}'")
                         # REPEAT_LAST_OUTPUT_V1 — cache this turn's output for replay.
@@ -2956,7 +2988,7 @@ async def websocket_handler(client_ws: WebSocket):
                         last_output = {
                             "text":        full_translation.strip(),
                             "target_lang": target_lang,
-                            "source_text": interpretation,   # post-rescue, not raw STT
+                            "source_text": _orig_interpretation,   # pre-merge, post-rescue
                             "direction":   f"{active_lang}→{target_lang}",
                         }
                         log(f"[flow-local] [repeat] cached: dir={last_output['direction']} text='{last_output['text'][:60]}'")
