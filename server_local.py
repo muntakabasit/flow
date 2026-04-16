@@ -2319,6 +2319,15 @@ async def websocket_handler(client_ws: WebSocket):
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "short_segment"})
                 return
 
+            # COMMIT QUALITY GUARD 1 — minimum duration before STT
+            # Segments shorter than 900ms are almost always fragmented speech,
+            # trailing breath, or a spurious VAD trigger. Skip them before
+            # spending GPU time on transcription.
+            if segment_ms < 900:
+                log(f"[commit_guard] segment too short for STT ({segment_ms}ms < 900ms) — skipped")
+                await client_ws.send_json({"type": "turn_complete", "skip_reason": "commit_guard_short"})
+                return
+
             # 1. Transcribe (in thread pool — blocking)
             #    Only pass manual user preference as Whisper language hint.
             #    Do NOT pass stable_lang as forced_source_language — it would force-transcribe
@@ -2352,6 +2361,18 @@ async def websocket_handler(client_ws: WebSocket):
                 log(f"[flow-local] STT Traceback:\n{traceback.format_exc()}")
                 await client_ws.send_json({"type": "error", "code": "STT_FAILED", "message": "Could not understand speech"})
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "stt_exception"})
+                return
+
+            # COMMIT QUALITY GUARD 2 — post-STT text length check
+            # Very short transcripts (≤2 words) that are not in the allowed set are
+            # almost always fragments, noise, or hallucinated filler. Drop them before
+            # the rescue chain and translation pipeline run.
+            _SHORT_ALLOWED: frozenset = frozenset({
+                "help me", "i'm fine", "stop", "wait", "okay",
+            })
+            if len(text.split()) <= 2 and text.strip().lower() not in _SHORT_ALLOWED:
+                log(f"[commit_guard] short transcript not in allow-list: '{text}' — skipped")
+                await client_ws.send_json({"type": "turn_complete", "skip_reason": "commit_guard_short_text"})
                 return
 
             # P3.5 STT SANITY GUARD — correct obvious pt→en misclassification.
