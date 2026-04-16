@@ -1630,12 +1630,6 @@ def _naturalize_output(text: str, target_lang: str) -> str:
         if key in ("qual é o seu nome?", "qual e o seu nome?"):
             return "como você se chama?"
 
-    if target_lang.startswith("en"):
-        if key in ("i am.", "i am"):
-            return "I'm here."
-        if key in ("what?",):
-            return "what do you mean?"
-
     return text
 
 
