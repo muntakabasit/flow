@@ -1119,18 +1119,22 @@ def _is_incomplete_thought(text: str) -> bool:
     """Return True if text is likely a partial / incomplete speech fragment.
 
     Lightweight heuristic — no LLM, no parsing.
-    Checks applied (in order):
+    Checks (in order):
       1. Empty input
       2. Trailing hesitation: ends with ellipsis, dash, or audible filler
-      3. <= 2 words AND the last word is an unfinished-sentence starter
+      3. <= 2 punctuation-stripped words AND last word is a dangling starter
          (question words, subject pronouns, conjunctions left hanging)
+      4. Subject + bare-verb pair with no predicate ("I am.", "We were.")
 
-    NOT triggered by short but complete sentences:
+    Punctuation stripped per-word before comparison so "what?" and "i."
+    match the same as "what" and "i".
+
+    NOT triggered by short complete sentences:
       "What happened?" ✅  "What's up?" ✅  "I'm okay." ✅  "Thank you." ✅
-    IS triggered by dangling fragments:
-      "How I…" ✅  "What…" ✅  "Because…" ✅  "I'm…" ✅
+    IS triggered by:
+      "How I." ✅  "What?" ✅  "How?" ✅  "I am." ✅  "Because…" ✅
     """
-    t = text.strip().lower()
+    t = text.strip().lower().replace("…", "...")   # normalize unicode ellipsis
     words = t.split()
 
     if not words:
@@ -1140,16 +1144,32 @@ def _is_incomplete_thought(text: str) -> bool:
     if t.endswith(("...", "-", "uh", "um", "er")):
         return True
 
-    # Very short fragments — only hold when last word looks unfinished
-    if len(words) <= 2:
-        _unfinished_starters = {
-            "how", "what", "why", "when", "where", "who",
-            "i", "i'm", "im", "we", "we're", "were",
-            "you", "youre", "you're", "they", "theyre", "they're",
-            "because", "if", "so", "then", "but", "and",
-        }
-        if words[-1] in _unfinished_starters:
-            return True
+    # Strip punctuation from each token for semantic checks
+    clean = [re.sub(r"[^\w']", "", w) for w in words]
+    clean = [w for w in clean if w]
+    if not clean:
+        return True
+
+    _starters = {
+        "how", "what", "why", "when", "where", "who",
+        "i", "im", "we", "you", "they", "he", "she", "it",
+        "because", "if", "so", "then", "but", "and",
+    }
+
+    # Short fragment: last content word is a dangling starter
+    if len(clean) <= 2 and clean[-1] in _starters:
+        return True
+
+    # Subject + bare-verb with no predicate — semantically incomplete
+    _bare_verb_pairs = {
+        ("i", "am"), ("i", "was"), ("i", "will"), ("i", "have"),
+        ("we", "are"), ("we", "were"), ("we", "will"),
+        ("you", "are"), ("you", "were"),
+        ("they", "are"), ("they", "were"),
+        ("he", "is"), ("she", "is"), ("it", "is"),
+    }
+    if len(clean) == 2 and tuple(clean) in _bare_verb_pairs:
+        return True
 
     return False
 
