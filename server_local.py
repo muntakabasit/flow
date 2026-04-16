@@ -2243,6 +2243,11 @@ async def websocket_handler(client_ws: WebSocket):
     preferred_target_lang = None    # "en" | "pt-BR" | None(auto)
     lock_target_lang = False        # when true, force target language; default pair-mode auto
 
+    # Turn timing — silence confirmation
+    # True when speech_stopped came from an explicit orb release (msg_type="speech_stopped").
+    # False when VAD auto-detected silence. Only VAD-triggered stops get the 350ms hold.
+    _force_release = False          # reset each audio/release branch
+
     # Send ready (wait for client to send mode preference)
     await client_ws.send_json({
         "type": "flow.ready",
@@ -2435,6 +2440,7 @@ async def websocket_handler(client_ws: WebSocket):
                     continue
 
                 # Client released orb — finalize immediately, no silence wait
+                _force_release = True
                 last_audio_time = time.monotonic()
                 events = vad.force_finalize()
 
