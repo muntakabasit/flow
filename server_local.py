@@ -2247,6 +2247,10 @@ async def websocket_handler(client_ws: WebSocket):
     # True when speech_stopped came from an explicit orb release (msg_type="speech_stopped").
     # False when VAD auto-detected silence. Only VAD-triggered stops get the 350ms hold.
     _force_release = False          # reset each audio/release branch
+    TURN_COMMIT_DEBOUNCE_MS = 400
+    pending_vad_segment = None
+    pending_vad_deadline = None
+    carryover_segment = None
 
     # Send ready (wait for client to send mode preference)
     await client_ws.send_json({
@@ -2295,9 +2299,449 @@ async def websocket_handler(client_ws: WebSocket):
 
     keepalive_task = asyncio.create_task(keepalive())
 
+    async def _commit_segment(speech_audio, commit_reason, segment_duration_ms=0.0):
+        nonlocal turn_count, turns_since_switch, last_output, is_playing_tts, _force_release
+        nonlocal stable_lang, session_locked, candidate_lang, lang_switch_counter
+
+        try:
+            log(f"[turn_commit] reason={commit_reason}")
+            log(f"[flow-local] Speech stopped — segment {segment_duration_ms:.0f}ms")
+            await client_ws.send_json({"type": "speech_stopped"})
+            turn_start = time.monotonic()
+
+            duration_s = len(speech_audio) / VAD_SAMPLE_RATE
+            segment_ms = int(duration_s * 1000)
+            log(f"[flow-local] Speech segment: {duration_s:.1f}s ({len(speech_audio)} samples)")
+
+            # Guard: skip tiny segments that are usually noise/trailing breaths
+            if segment_ms < MIN_SPEECH_SEGMENT_MS:
+                log(f"[flow-local] Turn skipped: short_segment ({segment_ms}ms < {MIN_SPEECH_SEGMENT_MS}ms)")
+                await client_ws.send_json({"type": "turn_complete", "skip_reason": "short_segment"})
+                return
+
+            # 1. Transcribe (in thread pool — blocking)
+            #    Only pass manual user preference as Whisper language hint.
+            #    Do NOT pass stable_lang as forced_source_language — it would force-transcribe
+            #    echo as wrong language. Pass it separately for dual-transcription scoring bias.
+            #
+            # P3.4 TURN RESET: each fresh PTT segment is evaluated without session-language
+            # bias so Whisper picks the language of THIS audio, not the prior session.
+            # stable_lang is cleared from the bias slot (passed as None) while skip_dual
+            # retains the performance optimization (True when session is established).
+            # The session variable stable_lang is NOT modified — memory lives on.
+            log(f"[turn_reset] prior_session_lang={stable_lang or 'none'} new_segment_started=1")
+            stt_start = time.monotonic()
+            pre_stt_ms = (stt_start - turn_start) * 1000
+            try:
+                async with stt_lock:   # serialise Metal GPU — only one Whisper at a time
+                    text, detected_lang, stt_confidence = await loop.run_in_executor(
+                        EXECUTOR,
+                        transcribe_segment,
+                        speech_audio,
+                        preferred_source_lang,       # manual preference only (or None)
+                        stable_lang is not None,     # skip_dual: True when session established
+                        None,                        # bias=None: no session tilt per fresh turn
+                    )
+                stt_ms = (time.monotonic() - stt_start) * 1000
+                log(f"[segment_detect] detected={detected_lang} conf={stt_confidence:.2f} prior_session={stable_lang or 'none'}")
+                log(f"[flow-local] STT ({stt_ms:.0f}ms): [{detected_lang}] confidence={stt_confidence:.2f} text='{text}'")
+            except Exception as e:
+                stt_ms = (time.monotonic() - stt_start) * 1000
+                log(f"[flow-local] ❌ STT EXCEPTION ({stt_ms:.0f}ms): {type(e).__name__}: {e}")
+                import traceback
+                log(f"[flow-local] STT Traceback:\n{traceback.format_exc()}")
+                await client_ws.send_json({"type": "error", "code": "STT_FAILED", "message": "Could not understand speech"})
+                await client_ws.send_json({"type": "turn_complete", "skip_reason": "stt_exception"})
+                return
+
+            # P3.5 STT SANITY GUARD — correct obvious pt→en misclassification.
+            # Whisper sometimes labels clear English as pt after a prior PT turn.
+            # If transcript contains ≥2 English discriminating words and no PT
+            # markers, trust the text over the label.
+            if str(detected_lang).startswith("pt") and _text_clearly_english(text):
+                log(f"[stt_override] from={detected_lang} to=en text=\"{text[:60]}\"")
+                detected_lang = "en"
+
+            # ── 3-lane gate: fast Lane C ────────────────────────────
+            # Cheap checks that don't need the rescue chain.
+            # Empty / floor / unknown-lang / gibberish → repeat-request.
+            # unknown_lang gets a guarded EN retry before dropping.
+            raw_text = text   # preserve pre-rescue text for logging
+            _cleaned = _clean_repetition_hallucinations(text)
+            if _cleaned != text:
+                log(f"[flow-local] Hallucination cleaned: '{text}' -> '{_cleaned}'")
+                text = _cleaned
+            _fast_c_reason = None
+            if not text.strip():
+                _fast_c_reason = "empty_transcript"
+            elif stt_confidence < CONF_WEAK_FLOOR:
+                _fast_c_reason = f"below_floor ({stt_confidence:.2f})"
+            elif normalize_lang(detected_lang) is None:
+                # Guarded EN retry — three-gate check before attempting
+                if _should_retry_as_english(detected_lang, text, stable_lang, preferred_source_lang or ""):
+                    log(f"[flow-local] unknown_lang '{detected_lang}' — EN retry gate passed, retrying")
+                    try:
+                        async with stt_lock:   # serialise Metal GPU — same lock as primary STT
+                            _retry_text, _retry_lang, _retry_conf = await loop.run_in_executor(
+                                EXECUTOR,
+                                transcribe_segment,
+                                speech_audio,
+                                "en",   # forced English
+                                True,   # skip_dual — we already spent one pass
+                            )
+                        # Log the retry event (phase=fast_retry — no final lane yet)
+                        _write_accent_log({
+                            "ts": time.time(), "session_id": session_id,
+                            "source_tag": SOURCE_TAG,
+                            "phase": "fast_retry",
+                            "raw_stt": text, "rescued_text": None,
+                            "rescue_changed": None,
+                            "stt_conf": stt_confidence, "detected_lang": detected_lang,
+                            "normalized_lang": None,
+                            "stable_lang": stable_lang,
+                            "lane": None, "lane_reason": f"unknown_lang ({detected_lang})",
+                            "en_retry_fired": True,
+                            "en_retry_conf": _retry_conf,
+                            "en_retry_text": _retry_text,
+                            "translation_out": None,
+                            "annotated_intended": None,
+                            "failure_category": None, "audio_quality": None,
+                        })
+                        if _retry_conf >= CONF_WEAK_FLOOR:
+                            log(f"[flow-local] EN retry recovered: conf={_retry_conf:.2f} text='{_retry_text}'")
+                            text           = _retry_text
+                            detected_lang  = _retry_lang
+                            stt_confidence = _retry_conf
+                            # fall through — no _fast_c_reason, processing continues
+                        else:
+                            log(f"[flow-local] EN retry insufficient: conf={_retry_conf:.2f} — dropping")
+                            _fast_c_reason = f"unknown_lang ({detected_lang}) en_retry_conf={_retry_conf:.2f}"
+                    except Exception as _e:
+                        log(f"[flow-local] EN retry exception: {_e} — dropping")
+                        _fast_c_reason = f"unknown_lang ({detected_lang}) en_retry_error"
+                else:
+                    _fast_c_reason = f"unknown_lang ({detected_lang})"
+            elif is_gibberish(text):
+                _fast_c_reason = f"gibberish"
+            if _fast_c_reason:
+                log(f"[flow-local] Turn → Lane C ({_fast_c_reason}): text='{text}'")
+                _write_accent_log({
+                    "ts": time.time(), "session_id": session_id,
+                    "source_tag": SOURCE_TAG,
+                    "phase": "turn",
+                    "raw_stt": raw_text, "rescued_text": None,
+                    "rescue_changed": 0,
+                    "stt_conf": stt_confidence, "detected_lang": detected_lang,
+                    "normalized_lang": normalize_lang(detected_lang),
+                    "stable_lang": stable_lang,
+                    "lane": "C", "lane_reason": _fast_c_reason,
+                    "en_retry_fired": False,
+                    "en_retry_conf": None, "en_retry_text": None,
+                    "translation_out": None,
+                    "annotated_intended": None,
+                    "failure_category": None, "audio_quality": None,
+                })
+                await client_ws.send_json({
+                    "type": "turn_complete",
+                    "skip_reason": "repeat_requested",
+                    "lane": "C",
+                    "reason": _fast_c_reason,
+                })
+                turns_since_switch += 1
+                return
+
+            # P1.3/P1.8 language stabilization
+            normalized_lang = normalize_lang(detected_lang)
+            switch_reason = "first_detection"
+            if stable_lang is None:
+                if normalized_lang:
+                    stable_lang = normalized_lang
+                    session_locked = True
+                    active_lang = stable_lang
+                    candidate_lang = None
+                    lang_switch_counter = 0
+                    turns_since_switch = 0
+                    log(f"[flow-local] First language locked: {stable_lang}")
+                    log(f"[session_lock] stable_lang={stable_lang}")
+                else:
+                    active_lang = "en"
+                    switch_reason = f"unsupported_initial ({detected_lang})"
+            else:
+                if normalized_lang and normalized_lang != stable_lang:
+                    if candidate_lang == normalized_lang:
+                        lang_switch_counter += 1
+                    else:
+                        candidate_lang = normalized_lang
+                        lang_switch_counter = 1
+
+                    if lang_switch_counter >= LANGUAGE_SWITCH_HYSTERESIS:
+                        if turns_since_switch >= LANGUAGE_SWITCH_COOLDOWN or stt_confidence >= 0.95:
+                            _prev_stable = stable_lang
+                            if normalized_lang:
+                                stable_lang = normalized_lang
+                                session_locked = True
+                                assert stable_lang is not None
+                            active_lang = stable_lang
+                            candidate_lang = None
+                            lang_switch_counter = 0
+                            turns_since_switch = 0
+                            switch_reason = "hysteresis_satisfied"
+                            log(f"[lang_switch] from={_prev_stable} to={stable_lang} conf={stt_confidence:.2f}")
+                            log(f"[session_lock] stable_lang={stable_lang}")
+                            log(f"[flow-local] Language switched to {stable_lang} (cooldown ok)")
+                        else:
+                            active_lang = stable_lang
+                            switch_reason = f"cooldown_active ({turns_since_switch}/{LANGUAGE_SWITCH_COOLDOWN})"
+                            log(f"[flow-local] Language switch blocked by cooldown: {switch_reason}")
+                    else:
+                        if stt_confidence >= MIN_CONFIDENCE_SWITCH:
+                            active_lang = normalized_lang
+                            log(f"[lang_switch] from={stable_lang} to={normalized_lang} conf={stt_confidence:.2f}")
+                        else:
+                            active_lang = stable_lang
+                        switch_reason = f"hysteresis_pending ({lang_switch_counter}/{LANGUAGE_SWITCH_HYSTERESIS})"
+                elif normalized_lang and normalized_lang == stable_lang:
+                    candidate_lang = None
+                    lang_switch_counter = 0
+                    active_lang = stable_lang
+                    switch_reason = "confirmed_language"
+                else:
+                    active_lang = stable_lang
+                    switch_reason = f"unsupported_lang_ignored ({detected_lang})"
+                    log(
+                        f"[flow-local] [lang_lock] detected={detected_lang} kept={active_lang}"
+                        f" reason={switch_reason} text={text[:40]!r}"
+                    )
+
+            if normalized_lang and normalized_lang != active_lang:
+                log(
+                    f"[flow-local] [lang_lock] detected={detected_lang} kept={active_lang}"
+                    f" reason={switch_reason} text={text[:40]!r}"
+                )
+
+            # TURN OWNERSHIP LOCK — P3.3
+            _session_chosen = active_lang
+            if (
+                normalized_lang
+                and normalized_lang != active_lang
+                and stt_confidence >= MIN_CONFIDENCE_SWITCH
+            ):
+                active_lang = normalized_lang
+            log(
+                f"[turn_owner] segment_lang={normalized_lang or detected_lang}"
+                f" session_lang={_session_chosen} chosen={active_lang}"
+                f" conf={stt_confidence:.2f}"
+            )
+
+            # Optional manual source override from client settings
+            if preferred_source_lang:
+                log(
+                    f"[flow-local] lang_override: stability={active_lang} → override={preferred_source_lang}"
+                    f" text={text[:40]!r}"
+                )
+                active_lang = preferred_source_lang
+                switch_reason = f"manual_source_override ({preferred_source_lang})"
+
+            # 1b. Three-pass rescue chain (internal).
+            phonetic = phonetic_rescue(text, active_lang)
+            interpretation = rescue_transcript(phonetic, active_lang)
+            if active_lang and active_lang.startswith("en"):
+                interpretation = _normalize_accent_en(interpretation)
+            rescue_changed_count = _count_rescue_changes(text, interpretation)
+            log(
+                f"[flow-local] 📝 raw='{text}'"
+                f" | phonetic='{phonetic}' [{'changed' if phonetic != text else 'clean'}]"
+                f" | rescued='{interpretation}' [{'changed' if interpretation != phonetic else 'clean'}]"
+                f" | rescue_changes={rescue_changed_count} src={active_lang}"
+            )
+
+            await client_ws.send_json({
+                "type": "source_transcript",
+                "text": interpretation,
+                "diagnostics": {
+                    "detected_lang": detected_lang,
+                    "stt_confidence": stt_confidence,
+                    "stable_lang": stable_lang,
+                    "active_lang": active_lang,
+                    "switch_reason": switch_reason,
+                    "segment_ms": segment_ms,
+                }
+            })
+
+            # 1c. Full 3-lane classification
+            turn_lane, lane_reason = _classify_turn_lane(
+                text, detected_lang, stt_confidence, rescue_changed_count, stable_lang
+            )
+            log(f"[flow-local] Turn → Lane {turn_lane}: {lane_reason}")
+
+            if turn_lane == 'C' or rescue_changed_count >= 2 or stt_confidence < 0.65:
+                _write_accent_log({
+                    "ts": time.time(), "session_id": session_id,
+                    "source_tag": SOURCE_TAG,
+                    "phase": "turn",
+                    "raw_stt": raw_text, "rescued_text": interpretation,
+                    "rescue_changed": rescue_changed_count,
+                    "stt_conf": stt_confidence, "detected_lang": detected_lang,
+                    "normalized_lang": normalize_lang(detected_lang),
+                    "stable_lang": stable_lang,
+                    "lane": turn_lane, "lane_reason": lane_reason,
+                    "en_retry_fired": False,
+                    "en_retry_conf": None, "en_retry_text": None,
+                    "translation_out": None,
+                    "annotated_intended": None,
+                    "failure_category": None, "audio_quality": None,
+                })
+
+            if turn_lane == 'C':
+                await client_ws.send_json({
+                    "type": "turn_complete",
+                    "skip_reason": "repeat_requested",
+                    "lane": "C",
+                    "reason": lane_reason,
+                })
+                turns_since_switch += 1
+                return
+
+            if turn_lane == 'B':
+                interpretation = await clarify_transcript(interpretation, active_lang)
+
+            _guard_text = _clean_intent_text(interpretation, active_lang)
+
+            if len(_guard_text.split()) < 3:
+                await asyncio.sleep(0.15)
+
+            if _is_incomplete_thought(_guard_text):
+                log(f"[turn_hold] incomplete='{_guard_text}'")
+                await client_ws.send_json({"type": "turn_complete", "skip_reason": "incomplete_thought"})
+                turns_since_switch += 1
+                return
+
+            _orig_interpretation = interpretation
+            ctx_prev = conv_ctx.last_clean_meaning or ""
+            if _should_apply_context(ctx_prev, interpretation):
+                interpretation = f"{ctx_prev}. {interpretation}"
+                log(f"[ctx_merge] prev='{ctx_prev[:40]}' + curr='{_orig_interpretation[:40]}'")
+
+            barge_in_event.clear()
+            is_playing_tts = True
+            full_translation, target_lang, llm_ms, tts_first_ms, tts_total_ms, llm_ttft_ms = \
+                await translate_and_stream_tts(
+                    interpretation, active_lang,
+                    preferred_target_lang if lock_target_lang else None,
+                    client_ws, loop, turn_count, barge_in_event,
+                    conv_ctx,
+                )
+
+            if full_translation.strip() and _is_noop_output(
+                interpretation, full_translation, active_lang, target_lang
+            ):
+                _tgt_name = "Portuguese" if active_lang.startswith("en") else "English"
+                _src_name = "English"    if active_lang.startswith("en") else "Portuguese"
+                log(f"[translation_guard] noop_detected → retry text=\"{full_translation.strip()[:80]}\"")
+                _retry_instr = (
+                    f"Translate strictly into {_tgt_name}. "
+                    f"Do NOT repeat input. Output must be natural and fluent."
+                )
+                full_translation, target_lang, *_ = await translate_and_stream_tts(
+                    interpretation, active_lang,
+                    preferred_target_lang if lock_target_lang else None,
+                    client_ws, loop, turn_count, barge_in_event,
+                    conv_ctx,
+                    extra_instruction=_retry_instr,
+                )
+                if _is_noop_output(interpretation, full_translation, active_lang, target_lang):
+                    log(f"[translation_guard] noop_detected → dropped text=\"{full_translation.strip()[:80]}\"")
+                    full_translation = ""
+
+            if full_translation and full_translation.strip():
+                _raw = full_translation
+                full_translation = _naturalize_output(full_translation, target_lang)
+                if full_translation != _raw:
+                    log(f"[naturalize] raw=\"{_raw.strip()[:80]}\" → final=\"{full_translation.strip()[:80]}\"")
+
+            if full_translation.strip():
+                await client_ws.send_json({
+                    "type": "translation_done",
+                    "text": full_translation.strip(),
+                })
+
+            _ctx_eligible = (
+                turn_lane in ('A', 'B')
+                and stt_confidence >= CONF_LOW_CONFIDENCE_FLOOR
+                and normalize_lang(detected_lang) is not None
+                and bool(full_translation.strip())
+                and bool(_orig_interpretation.strip())
+            )
+            if _ctx_eligible:
+                _ctx_meaning = _orig_interpretation
+                conv_ctx.update(active_lang, target_lang, _ctx_meaning)
+                log(f"[flow-local] [ctx] updated: dir={conv_ctx.direction} meaning='{conv_ctx.last_clean_meaning}'")
+                last_output = {
+                    "text":        full_translation.strip(),
+                    "target_lang": target_lang,
+                    "source_text": _orig_interpretation,
+                    "direction":   f"{active_lang}→{target_lang}",
+                }
+                log(f"[flow-local] [repeat] cached: dir={last_output['direction']} text='{last_output['text'][:60]}'")
+            else:
+                log(f"[flow-local] [ctx] NOT updated: lane={turn_lane} conf={stt_confidence:.2f} eligible={_ctx_eligible}")
+
+            turn_ms = (time.monotonic() - turn_start) * 1000
+            turn_count += 1
+            turns_since_switch += 1
+            if turn_count == 1:
+                log("[flow-local] ✅ First usable turn complete — session fully ready")
+            await client_ws.send_json({"type": "turn_complete"})
+
+            metrics = {
+                "turn_id": turn_count,
+                "speech_duration_ms": round(segment_ms),
+                "pre_stt_ms": round(pre_stt_ms),
+                "stt_ms": round(stt_ms),
+                "llm_ttft_ms": round(llm_ttft_ms),
+                "llm_ms": round(llm_ms),
+                "tts_first_audio_ms": round(tts_first_ms),
+                "tts_total_ms": round(tts_total_ms),
+                "total_ms": round(turn_ms),
+                "source_lang": active_lang,
+                "target_lang": target_lang,
+            }
+            log(f"[flow-local] METRICS: {json.dumps(metrics)}")
+            log(f"[flow-local] ⏱ PIPELINE  pre_stt={pre_stt_ms:.0f}ms | stt={stt_ms:.0f}ms | llm_ttft={llm_ttft_ms:.0f}ms | llm={llm_ms:.0f}ms | tts_first={tts_first_ms:.0f}ms | total={turn_ms:.0f}ms")
+            _t_stt_done  = pre_stt_ms + stt_ms
+            _t_llm_tok   = _t_stt_done + llm_ttft_ms
+            _t_tts_ready = _t_stt_done + tts_first_ms
+            log(f"[flow-local] ⏱ BREAKDOWN"
+                f"  t0=0(stop_rx)"
+                f"  t1={pre_stt_ms:.0f}(stt_start)"
+                f"  t2={_t_stt_done:.0f}(stt_done)"
+                f"  t3={_t_llm_tok:.0f}(llm_1st_tok)"
+                f"  t4={_t_tts_ready:.0f}(audio_ready)"
+                f"  t5={turn_ms:.0f}(done)"
+                f"  — slowest={max(('pre_stt',pre_stt_ms),('stt',stt_ms),('llm_ttft',llm_ttft_ms),('llm',llm_ms),('tts_first',tts_first_ms),key=lambda x:x[1])[0]}")
+        finally:
+            _force_release = False
+
     try:
         while True:
-            raw = await client_ws.receive()
+            if pending_vad_segment is not None and pending_vad_deadline is not None:
+                remaining_s = pending_vad_deadline - time.monotonic()
+                if remaining_s <= 0:
+                    segment_to_commit = pending_vad_segment
+                    pending_vad_segment = None
+                    pending_vad_deadline = None
+                    await _commit_segment(segment_to_commit, "vad_silence")
+                    continue
+                try:
+                    raw = await asyncio.wait_for(client_ws.receive(), timeout=remaining_s)
+                except asyncio.TimeoutError:
+                    segment_to_commit = pending_vad_segment
+                    pending_vad_segment = None
+                    pending_vad_deadline = None
+                    await _commit_segment(segment_to_commit, "vad_silence")
+                    continue
+            else:
+                raw = await client_ws.receive()
             if raw.get("type") == "websocket.disconnect":
                 log("[flow-local] Client disconnected")
                 break
@@ -2442,11 +2886,22 @@ async def websocket_handler(client_ws: WebSocket):
                 # Client released orb — finalize immediately, no silence wait
                 _force_release = True
                 last_audio_time = time.monotonic()
+                if pending_vad_segment is not None:
+                    carryover_segment = pending_vad_segment if carryover_segment is None else np.concatenate([carryover_segment, pending_vad_segment])
+                    pending_vad_segment = None
+                    pending_vad_deadline = None
+                    log("[turn_hold] cancelled → explicit release")
                 events = vad.force_finalize()
 
                 # Guard: release arrived but VAD was never in speaking state
                 # (orb released before VAD detected speech onset, e.g. very quick tap).
                 if not events:
+                    if carryover_segment is not None:
+                        segment_to_commit = carryover_segment
+                        carryover_segment = None
+                        await _commit_segment(segment_to_commit, "force_release")
+                        continue
+                    _force_release = False
                     log("[flow-local] ⚠️ Release with VAD idle — no speech detected, turn skipped")
                     await client_ws.send_json({
                         "type": "turn_complete",
@@ -2459,6 +2914,11 @@ async def websocket_handler(client_ws: WebSocket):
             else:
                 # Update audio timeout counter
                 last_audio_time = time.monotonic()
+                if pending_vad_segment is not None:
+                    carryover_segment = pending_vad_segment if carryover_segment is None else np.concatenate([carryover_segment, pending_vad_segment])
+                    pending_vad_segment = None
+                    pending_vad_deadline = None
+                    log(f"[turn_hold] resumed before debounce elapsed ({TURN_COMMIT_DEBOUNCE_MS}ms)")
 
                 chunks_received += 1
                 if chunks_received == 1:
@@ -2492,554 +2952,36 @@ async def websocket_handler(client_ws: WebSocket):
                     speech_stop_time = time.monotonic()
                     # Segment duration: from VAD speech_started to stop event (release or hard cap).
                     segment_duration_ms = (speech_stop_time - speech_start_time) * 1000 if 'speech_start_time' in locals() else 0
-                    log(f"[flow-local] Speech stopped — segment {segment_duration_ms:.0f}ms")
-                    await client_ws.send_json({"type": "speech_stopped"})
-                    turn_start = time.monotonic()
-
                     speech_audio = event[1]  # float32 16kHz
-                    duration_s = len(speech_audio) / VAD_SAMPLE_RATE
-                    segment_ms = int(duration_s * 1000)
-                    log(f"[flow-local] Speech segment: {duration_s:.1f}s ({len(speech_audio)} samples)")
+                    if carryover_segment is not None:
+                        speech_audio = np.concatenate([carryover_segment, speech_audio])
+                        carryover_segment = None
 
-                    # Guard: skip tiny segments that are usually noise/trailing breaths
-                    if segment_ms < MIN_SPEECH_SEGMENT_MS:
-                        log(f"[flow-local] Turn skipped: short_segment ({segment_ms}ms < {MIN_SPEECH_SEGMENT_MS}ms)")
-                        await client_ws.send_json({"type": "turn_complete", "skip_reason": "short_segment"})
+                    if _force_release:
+                        await _commit_segment(speech_audio, "force_release", segment_duration_ms)
                         continue
 
-                    # 1. Transcribe (in thread pool — blocking)
-                    #    Only pass manual user preference as Whisper language hint.
-                    #    Do NOT pass stable_lang as forced_source_language — it would force-transcribe
-                    #    echo as wrong language. Pass it separately for dual-transcription scoring bias.
-                    #
-                    # P3.4 TURN RESET: each fresh PTT segment is evaluated without session-language
-                    # bias so Whisper picks the language of THIS audio, not the prior session.
-                    # stable_lang is cleared from the bias slot (passed as None) while skip_dual
-                    # retains the performance optimization (True when session is established).
-                    # The session variable stable_lang is NOT modified — memory lives on.
-                    log(f"[turn_reset] prior_session_lang={stable_lang or 'none'} new_segment_started=1")
-                    stt_start = time.monotonic()
-                    pre_stt_ms = (stt_start - turn_start) * 1000
-                    try:
-                        async with stt_lock:   # serialise Metal GPU — only one Whisper at a time
-                            text, detected_lang, stt_confidence = await loop.run_in_executor(
-                                EXECUTOR,
-                                transcribe_segment,
-                                speech_audio,
-                                preferred_source_lang,       # manual preference only (or None)
-                                stable_lang is not None,     # skip_dual: True when session established
-                                None,                        # bias=None: no session tilt per fresh turn
-                            )
-                        stt_ms = (time.monotonic() - stt_start) * 1000
-                        log(f"[segment_detect] detected={detected_lang} conf={stt_confidence:.2f} prior_session={stable_lang or 'none'}")
-                        log(f"[flow-local] STT ({stt_ms:.0f}ms): [{detected_lang}] confidence={stt_confidence:.2f} text='{text}'")
-                    except Exception as e:
-                        stt_ms = (time.monotonic() - stt_start) * 1000
-                        log(f"[flow-local] ❌ STT EXCEPTION ({stt_ms:.0f}ms): {type(e).__name__}: {e}")
-                        import traceback
-                        log(f"[flow-local] STT Traceback:\n{traceback.format_exc()}")
-                        await client_ws.send_json({"type": "error", "code": "STT_FAILED", "message": "Could not understand speech"})
-                        await client_ws.send_json({"type": "turn_complete", "skip_reason": "stt_exception"})
-                        continue
-
-                    # P3.5 STT SANITY GUARD — correct obvious pt→en misclassification.
-                    # Whisper sometimes labels clear English as pt after a prior PT turn.
-                    # If transcript contains ≥2 English discriminating words and no PT
-                    # markers, trust the text over the label.
-                    if str(detected_lang).startswith("pt") and _text_clearly_english(text):
-                        log(f"[stt_override] from={detected_lang} to=en text=\"{text[:60]}\"")
-                        detected_lang = "en"
-
-                    # ── 3-lane gate: fast Lane C ────────────────────────────
-                    # Cheap checks that don't need the rescue chain.
-                    # Empty / floor / unknown-lang / gibberish → repeat-request.
-                    # unknown_lang gets a guarded EN retry before dropping.
-                    raw_text = text   # preserve pre-rescue text for logging
-                    _cleaned = _clean_repetition_hallucinations(text)
-                    if _cleaned != text:
-                        log(f"[flow-local] Hallucination cleaned: '{text}' -> '{_cleaned}'")
-                        text = _cleaned
-                    _fast_c_reason = None
-                    if not text.strip():
-                        _fast_c_reason = "empty_transcript"
-                    elif stt_confidence < CONF_WEAK_FLOOR:
-                        _fast_c_reason = f"below_floor ({stt_confidence:.2f})"
-                    elif normalize_lang(detected_lang) is None:
-                        # Guarded EN retry — three-gate check before attempting
-                        if _should_retry_as_english(detected_lang, text, stable_lang, preferred_source_lang or ""):
-                            log(f"[flow-local] unknown_lang '{detected_lang}' — EN retry gate passed, retrying")
-                            try:
-                                async with stt_lock:   # serialise Metal GPU — same lock as primary STT
-                                    _retry_text, _retry_lang, _retry_conf = await loop.run_in_executor(
-                                        EXECUTOR,
-                                        transcribe_segment,
-                                        speech_audio,
-                                        "en",   # forced English
-                                        True,   # skip_dual — we already spent one pass
-                                    )
-                                # Log the retry event (phase=fast_retry — no final lane yet)
-                                _write_accent_log({
-                                    "ts": time.time(), "session_id": session_id,
-                                    "source_tag": SOURCE_TAG,
-                                    "phase": "fast_retry",
-                                    "raw_stt": text, "rescued_text": None,
-                                    "rescue_changed": None,
-                                    "stt_conf": stt_confidence, "detected_lang": detected_lang,
-                                    "normalized_lang": None,
-                                    "stable_lang": stable_lang,
-                                    "lane": None, "lane_reason": f"unknown_lang ({detected_lang})",
-                                    "en_retry_fired": True,
-                                    "en_retry_conf": _retry_conf,
-                                    "en_retry_text": _retry_text,
-                                    "translation_out": None,
-                                    "annotated_intended": None,
-                                    "failure_category": None, "audio_quality": None,
-                                })
-                                if _retry_conf >= CONF_WEAK_FLOOR:
-                                    log(f"[flow-local] EN retry recovered: conf={_retry_conf:.2f} text='{_retry_text}'")
-                                    text           = _retry_text
-                                    detected_lang  = _retry_lang
-                                    stt_confidence = _retry_conf
-                                    # fall through — no _fast_c_reason, processing continues
-                                else:
-                                    log(f"[flow-local] EN retry insufficient: conf={_retry_conf:.2f} — dropping")
-                                    _fast_c_reason = f"unknown_lang ({detected_lang}) en_retry_conf={_retry_conf:.2f}"
-                            except Exception as _e:
-                                log(f"[flow-local] EN retry exception: {_e} — dropping")
-                                _fast_c_reason = f"unknown_lang ({detected_lang}) en_retry_error"
-                        else:
-                            _fast_c_reason = f"unknown_lang ({detected_lang})"
-                    elif is_gibberish(text):
-                        _fast_c_reason = f"gibberish"
-                    if _fast_c_reason:
-                        log(f"[flow-local] Turn → Lane C ({_fast_c_reason}): text='{text}'")
-                        _write_accent_log({
-                            "ts": time.time(), "session_id": session_id,
-                            "source_tag": SOURCE_TAG,
-                            "phase": "turn",
-                            "raw_stt": raw_text, "rescued_text": None,
-                            "rescue_changed": None,
-                            "stt_conf": stt_confidence, "detected_lang": detected_lang,
-                            "normalized_lang": normalize_lang(detected_lang),
-                            "stable_lang": stable_lang,
-                            "lane": "C", "lane_reason": _fast_c_reason,
-                            "en_retry_fired": False,
-                            "en_retry_conf": None, "en_retry_text": None,
-                            "translation_out": None,
-                            "annotated_intended": None,
-                            "failure_category": None, "audio_quality": None,
-                        })
-                        await client_ws.send_json({
-                            "type": "turn_complete",
-                            "skip_reason": "repeat_requested",
-                            "lane": "C",
-                            "reason": _fast_c_reason,
-                        })
-                        turns_since_switch += 1
-                        continue
-                    # ────────────────────────────────────────────────────────
-
-                    # ── Low-confidence guard ────────────────────────────────────
-                    # STT confidence < CONF_LOW_CONFIDENCE_FLOOR (0.60):
-                    #   • Short text (< 3 words): skip — likely noise, not speech.
-                    #     Prevents a mumble or ambient sound from generating a
-                    #     garbled translation that confuses the conversation.
-                    #   • Longer text: let it through but log clearly.
-                    #     Could be genuine low-energy speech; rescue chain handles it.
-                    # This sits above the hard Lane-C floor (CONF_WEAK_FLOOR=0.30)
-                    # and adds a graduated quality gate without killing real speech.
-                    if stt_confidence < CONF_LOW_CONFIDENCE_FLOOR:
-                        _word_count = len(text.strip().split())
-                        if _word_count < 3:
-                            log(f"[flow-local] ⚠️ Low-conf short turn: conf={stt_confidence:.2f} words={_word_count} text='{text}' — skipping")
-                            await client_ws.send_json({
-                                "type": "turn_complete",
-                                "skip_reason": "low_confidence_short",
-                                "stt_confidence": round(stt_confidence, 2),
-                            })
-                            turns_since_switch += 1
-                            continue
-                        else:
-                            log(f"[flow-local] ⚠️ Low-conf turn: conf={stt_confidence:.2f} words={_word_count} text='{text}' — proceeding with caution")
-                    # ────────────────────────────────────────────────────────────
-
-                    # LANGUAGE STABILITY: Apply hysteresis and cooldown
-                    # Normalize detected language to canonical form (en or pt-BR)
-                    normalized_lang = normalize_lang(detected_lang)
-
-                    # SESSION MEMORY LOCK — P3.4 refined
-                    # Once session_locked, an unsupported/unknown detection (normalized_lang=None)
-                    # must NOT weaken the established session. Fall back to stable_lang so
-                    # hysteresis and turn_owner see a valid language, not None.
-                    # Strong opposing signals still override via turn_owner (no conflict).
-                    if session_locked and normalized_lang is None:
-                        normalized_lang = stable_lang
-                    log(f"[session_lock] locked={session_locked} stable={stable_lang} normalized={normalized_lang}")
-
-                    switch_reason = None
-                    active_lang = stable_lang if stable_lang else normalized_lang
-
-                    # First detection: initialize stable language (normalized)
-                    if stable_lang is None:
-                        if normalized_lang:  # Only set if it's a supported language
-                            stable_lang = normalized_lang
-                            session_locked = True
-                            assert stable_lang is not None
-                            active_lang = normalized_lang
-                            switch_reason = "initial_detection"
-                            log(f"[flow-local] Language initialized: {stable_lang} (detected: {detected_lang})")
-                            log(f"[session_lock] stable_lang={stable_lang}")
-                        else:
-                            # Unsupported language on first detection
-                            log(f"[flow-local] Unsupported language on first detection: {detected_lang}, waiting for supported lang")
-                            switch_reason = "unsupported_initial"
-                            active_lang = normalized_lang or "pt-BR"  # fallback
-                            await client_ws.send_json({"type": "turn_complete"})
-                            turns_since_switch += 1
-                            continue
-
-                    # Language switch logic with hysteresis (only for supported languages)
-                    elif normalized_lang and normalized_lang != stable_lang:
-                        # Reset hysteresis if candidate language changes
-                        if normalized_lang != candidate_lang:
-                            candidate_lang = normalized_lang
-                            # HARDENED: only start accumulating if this first detection
-                            # already meets the confidence bar. A single noisy detection
-                            # of a different language must not start the switch clock.
-                            if stt_confidence >= MIN_CONFIDENCE_SWITCH:
-                                lang_switch_counter = 1
-                                active_lang = normalized_lang
-                                switch_reason = "language_candidate_detected"
-                                log(f"[lang_switch] from={stable_lang} to={normalized_lang} conf={stt_confidence:.2f}")
-                            else:
-                                lang_switch_counter = 0  # don't start counter on low-conf
-                                active_lang = stable_lang
-                                switch_reason = f"language_candidate_rejected_low_conf ({stt_confidence:.2f}<{MIN_CONFIDENCE_SWITCH})"
-                            log(f"[flow-local] Language candidate: {candidate_lang} (detected={detected_lang}, conf={stt_confidence:.2f}, counter={lang_switch_counter})")
-                        else:
-                            # HARDENED: only advance the counter on HIGH-confidence
-                            # detections. A low-confidence turn that happens to match
-                            # the candidate cannot accumulate toward a switch.
-                            if stt_confidence >= MIN_CONFIDENCE_SWITCH:
-                                lang_switch_counter += 1
-                            else:
-                                switch_reason = f"hysteresis_not_advanced_low_conf ({stt_confidence:.2f}<{MIN_CONFIDENCE_SWITCH})"
-                                active_lang = stable_lang
-                                log(f"[flow-local] Language candidate {candidate_lang}: low conf {stt_confidence:.2f} — counter stays at {lang_switch_counter}/{LANGUAGE_SWITCH_HYSTERESIS}")
-                            log(f"[flow-local] Language candidate {candidate_lang}: count={lang_switch_counter}/{LANGUAGE_SWITCH_HYSTERESIS}")
-
-                            # Check if we have enough consecutive detections to switch
-                            if lang_switch_counter >= LANGUAGE_SWITCH_HYSTERESIS:
-                                # Check cooldown: allow very high confidence to override
-                                if turns_since_switch >= LANGUAGE_SWITCH_COOLDOWN or stt_confidence >= 0.95:
-                                    _prev_stable = stable_lang
-                                    if normalized_lang:   # guard: never revert stable_lang to None
-                                        stable_lang = normalized_lang
-                                        session_locked = True
-                                        assert stable_lang is not None
-                                    active_lang = stable_lang
-                                    candidate_lang = None
-                                    lang_switch_counter = 0
-                                    turns_since_switch = 0
-                                    switch_reason = "hysteresis_satisfied"
-                                    log(f"[lang_switch] from={_prev_stable} to={stable_lang} conf={stt_confidence:.2f}")
-                                    log(f"[session_lock] stable_lang={stable_lang}")
-                                    log(f"[flow-local] Language switched to {stable_lang} (cooldown ok)")
-                                else:
-                                    # Still in cooldown period
-                                    active_lang = stable_lang
-                                    switch_reason = f"cooldown_active ({turns_since_switch}/{LANGUAGE_SWITCH_COOLDOWN})"
-                                    log(f"[flow-local] Language switch blocked by cooldown: {switch_reason}")
-                            else:
-                                # Not enough consecutive detections yet.
-                                # Gate direction flip on MIN_CONFIDENCE_SWITCH — same rule
-                                # as first-detection: confident signal flips immediately,
-                                # uncertain signal holds stable direction until hysteresis done.
-                                if stt_confidence >= MIN_CONFIDENCE_SWITCH:
-                                    active_lang = normalized_lang
-                                    log(f"[lang_switch] from={stable_lang} to={normalized_lang} conf={stt_confidence:.2f}")
-                                else:
-                                    active_lang = stable_lang
-                                switch_reason = f"hysteresis_pending ({lang_switch_counter}/{LANGUAGE_SWITCH_HYSTERESIS})"
-                    elif normalized_lang and normalized_lang == stable_lang:
-                        # Same language detected again — reset hysteresis
-                        candidate_lang = None
-                        lang_switch_counter = 0
-                        active_lang = stable_lang
-                        switch_reason = "confirmed_language"
-                    else:
-                        # Unsupported language detected while stable lang exists
-                        active_lang = stable_lang  # Ignore unsupported detection
-                        switch_reason = f"unsupported_lang_ignored ({detected_lang})"
-                        log(
-                            f"[flow-local] [lang_lock] detected={detected_lang} kept={active_lang}"
-                            f" reason={switch_reason} text={text[:40]!r}"
-                        )
-
-                    # P1.8: unified lock log — fires whenever the stability system uses a
-                    # different (supported) language than what the detector returned this turn.
-                    # Covers: low-conf rejection, cooldown block, hysteresis pending.
-                    # Unsupported-lang case is already logged in the else branch above.
-                    if normalized_lang and normalized_lang != active_lang:
-                        log(
-                            f"[flow-local] [lang_lock] detected={detected_lang} kept={active_lang}"
-                            f" reason={switch_reason} text={text[:40]!r}"
-                        )
-
-                    # TURN OWNERSHIP LOCK — P3.3
-                    # The session stability system above resolves active_lang using hysteresis
-                    # and cooldown. That is correct for session-level memory, but in push-to-talk
-                    # use each segment is its own speech act and should own its language when
-                    # the detection is confident.
-                    #
-                    # Rule: if this segment's detected language differs from what the session
-                    # system chose AND confidence >= MIN_CONFIDENCE_SWITCH, override active_lang
-                    # for this turn only. stable_lang / candidate_lang / hysteresis state are
-                    # NOT modified — session memory evolves at its own pace.
-                    _session_chosen = active_lang
-                    if (
-                        normalized_lang
-                        and normalized_lang != active_lang
-                        and stt_confidence >= MIN_CONFIDENCE_SWITCH
-                    ):
-                        active_lang = normalized_lang
-                    log(
-                        f"[turn_owner] segment_lang={normalized_lang or detected_lang}"
-                        f" session_lang={_session_chosen} chosen={active_lang}"
-                        f" conf={stt_confidence:.2f}"
-                    )
-
-                    # Optional manual source override from client settings
-                    if preferred_source_lang:
-                        log(
-                            f"[flow-local] lang_override: stability={active_lang} → override={preferred_source_lang}"
-                            f" text={text[:40]!r}"
-                        )
-                        active_lang = preferred_source_lang
-                        switch_reason = f"manual_source_override ({preferred_source_lang})"
-
-                    # 1b. Three-pass rescue chain (internal).
-                    #     Pass 1: phonetic confusion  e.g. "no feet" → "no fit"
-                    #     Pass 2: slang/shorthand      e.g. "no fit"  → "can't"
-                    #     Pass 3: accent normalization e.g. "axed me" → "asked me"  [EN only]
-                    phonetic = phonetic_rescue(text, active_lang)
-                    interpretation = rescue_transcript(phonetic, active_lang)
-                    if active_lang and active_lang.startswith("en"):
-                        interpretation = _normalize_accent_en(interpretation)
-                    rescue_changed_count = _count_rescue_changes(text, interpretation)
-                    log(
-                        f"[flow-local] 📝 raw='{text}'"
-                        f" | phonetic='{phonetic}' [{'changed' if phonetic != text else 'clean'}]"
-                        f" | rescued='{interpretation}' [{'changed' if interpretation != phonetic else 'clean'}]"
-                        f" | rescue_changes={rescue_changed_count} src={active_lang}"
-                    )
-
-                    # Send post-rescue transcript — this is what translation actually operated on.
-                    # For clean audio rescue is a no-op (interpretation == text); for noisy audio
-                    # the user sees the corrected text, which is honest.
-                    await client_ws.send_json({
-                        "type": "source_transcript",
-                        "text": interpretation,
-                        "diagnostics": {
-                            "detected_lang": detected_lang,
-                            "stt_confidence": stt_confidence,
-                            "stable_lang": stable_lang,
-                            "active_lang": active_lang,
-                            "switch_reason": switch_reason,
-                            "segment_ms": segment_ms,
-                        }
-                    })
-
-                    # 1c. Full 3-lane classification (rescue_changed_count + stable_lang now available)
-                    turn_lane, lane_reason = _classify_turn_lane(
-                        text, detected_lang, stt_confidence, rescue_changed_count, stable_lang
-                    )
-                    log(f"[flow-local] Turn → Lane {turn_lane}: {lane_reason}")
-
-                    # Phase 1 turn-level log: write when lane=C, heavy rescue, or borderline conf
-                    if turn_lane == 'C' or rescue_changed_count >= 2 or stt_confidence < 0.65:
-                        _write_accent_log({
-                            "ts": time.time(), "session_id": session_id,
-                            "source_tag": SOURCE_TAG,
-                            "phase": "turn",
-                            "raw_stt": raw_text, "rescued_text": interpretation,
-                            "rescue_changed": rescue_changed_count,
-                            "stt_conf": stt_confidence, "detected_lang": detected_lang,
-                            "normalized_lang": normalize_lang(detected_lang),
-                            "stable_lang": stable_lang,
-                            "lane": turn_lane, "lane_reason": lane_reason,
-                            "en_retry_fired": False,
-                            "en_retry_conf": None, "en_retry_text": None,
-                            "translation_out": None,   # filled after translation below
-                            "annotated_intended": None,
-                            "failure_category": None, "audio_quality": None,
-                        })
-
-                    if turn_lane == 'C':
-                        await client_ws.send_json({
-                            "type": "turn_complete",
-                            "skip_reason": "repeat_requested",
-                            "lane": "C",
-                            "reason": lane_reason,
-                        })
-                        turns_since_switch += 1
-                        continue
-
-                    # Lane B: run clarification (no-op while CLARIFICATION_ENABLED=False)
-                    if turn_lane == 'B':
-                        interpretation = await clarify_transcript(interpretation, active_lang)
-
-                    # D1.1 TURN COMPLETION GUARD — must run AFTER rescue chain, BEFORE translation.
-                    # Compute cleaned form once here for the guard (same logic as choke-point
-                    # inside translate_and_stream_tts, cheap regex — no latency impact).
-                    _guard_text = _clean_intent_text(interpretation, active_lang)
-
-                    # Micro-delay for very short inputs: allow continuation before committing.
-                    if len(_guard_text.split()) < 3:
-                        await asyncio.sleep(0.15)
-
-                    if _is_incomplete_thought(_guard_text):
-                        log(f"[turn_hold] incomplete='{_guard_text}'")
-                        await client_ws.send_json({"type": "turn_complete", "skip_reason": "incomplete_thought"})
-                        turns_since_switch += 1
-                        continue
-
-                    # D1.3 — Micro Context Carry (one-step continuity)
-                    # Prepend prior clean meaning to short/question turns so the
-                    # LLM resolves pronouns/topics implicitly. No chaining — the
-                    # merged text does NOT feed back into conv_ctx; _orig_interpretation
-                    # is the untouched current turn, and that's what gets stored.
-                    _orig_interpretation = interpretation
-                    ctx_prev = conv_ctx.last_clean_meaning or ""
-                    if _should_apply_context(ctx_prev, interpretation):
-                        interpretation = f"{ctx_prev}. {interpretation}"
-                        log(f"[ctx_merge] prev='{ctx_prev[:40]}' + curr='{_orig_interpretation[:40]}'")
-
-                    # 2+3. Streaming translate + TTS (overlapped)
-                    # Intent cleaning runs inside translate_and_stream_tts (choke-point).
-                    barge_in_event.clear()
-                    is_playing_tts = True
-                    full_translation, target_lang, llm_ms, tts_first_ms, tts_total_ms, llm_ttft_ms = \
-                        await translate_and_stream_tts(
-                            interpretation, active_lang,   # rescued text — intent-cleaned inside
-                            preferred_target_lang if lock_target_lang else None,
-                            client_ws, loop, turn_count, barge_in_event,
-                            conv_ctx,   # CONTROLLED_CONTEXT_V1: pronoun/topic anchor
-                        )
-
-                    # NO-OP GUARD: ensure LLM output is in target language, not source.
-                    # The LLM can ignore direction hints and echo source text despite a
-                    # correct prompt — this guard catches and corrects that failure.
-                    if full_translation.strip() and _is_noop_output(
-                        interpretation, full_translation, active_lang, target_lang
-                    ):
-                        _tgt_name = "Portuguese" if active_lang.startswith("en") else "English"
-                        _src_name = "English"    if active_lang.startswith("en") else "Portuguese"
-                        log(f"[translation_guard] noop_detected → retry text=\"{full_translation.strip()[:80]}\"")
-                        _retry_instr = (
-                            f"Translate strictly into {_tgt_name}. "
-                            f"Do NOT repeat input. Output must be natural and fluent."
-                        )
-                        full_translation, target_lang, *_ = await translate_and_stream_tts(
-                            interpretation, active_lang,
-                            preferred_target_lang if lock_target_lang else None,
-                            client_ws, loop, turn_count, barge_in_event,
-                            conv_ctx,
-                            extra_instruction=_retry_instr,
-                        )
-                        if _is_noop_output(interpretation, full_translation, active_lang, target_lang):
-                            log(f"[translation_guard] noop_detected → dropped text=\"{full_translation.strip()[:80]}\"")
-                            full_translation = ""   # blocks translation_done + ctx update
-
-                    # D1.2 — Tone & Meaning Alignment (choke-point)
-                    # Naturalize stiff/literal output into conversational form.
-                    # Runs after translation resolves (first call or retry),
-                    # before TTS finalisation + text emission.
-                    if full_translation and full_translation.strip():
-                        _raw = full_translation
-                        full_translation = _naturalize_output(full_translation, target_lang)
-                        if full_translation != _raw:
-                            log(f"[naturalize] raw=\"{_raw.strip()[:80]}\" → final=\"{full_translation.strip()[:80]}\"")
-
-                    # 4. Send final text (voice-first: text after audio started)
-                    if full_translation.strip():
-                        await client_ws.send_json({
-                            "type": "translation_done",
-                            "text": full_translation.strip(),
-                        })
-
-                    # CONTROLLED_CONTEXT_V1 — update conversational frame.
-                    # Gates: Lane A or B (turn_lane), confidence above low-conf floor,
-                    # supported language, non-empty translation.
-                    # Stores interpretation (post-rescue-chain source text) — NOT raw STT,
-                    # NOT the translation output. Anchors the NEXT turn's LLM prompt.
-                    _ctx_eligible = (
-                        turn_lane in ('A', 'B')
-                        and stt_confidence >= CONF_LOW_CONFIDENCE_FLOOR
-                        and normalize_lang(detected_lang) is not None
-                        and bool(full_translation.strip())
-                        and bool(_orig_interpretation.strip())
-                    )
-                    if _ctx_eligible:
-                        # Store _orig_interpretation (pre-D1.3-merge rescue-chain output).
-                        # Using the post-merge `interpretation` would feed "prev. curr"
-                        # back into conv_ctx → chaining beyond 1 step (NON-NEGOTIABLE #4).
-                        # Rescue-chain output is already phonetic/slang/accent-normalised;
-                        # re-cleaning would corrupt short emotional turns ("merda!").
-                        _ctx_meaning = _orig_interpretation
-                        conv_ctx.update(active_lang, target_lang, _ctx_meaning)
-                        log(f"[flow-local] [ctx] updated: dir={conv_ctx.direction} meaning='{conv_ctx.last_clean_meaning}'")
-                        # REPEAT_LAST_OUTPUT_V1 — cache this turn's output for replay.
-                        # Uses same gate as conv_ctx — never stores noisy/low-conf turns.
-                        last_output = {
-                            "text":        full_translation.strip(),
-                            "target_lang": target_lang,
-                            "source_text": _orig_interpretation,   # pre-merge, post-rescue
-                            "direction":   f"{active_lang}→{target_lang}",
-                        }
-                        log(f"[flow-local] [repeat] cached: dir={last_output['direction']} text='{last_output['text'][:60]}'")
-                    else:
-                        log(f"[flow-local] [ctx] NOT updated: lane={turn_lane} conf={stt_confidence:.2f} eligible={_ctx_eligible}")
-
-                    # Turn complete — log with streaming metrics
-                    turn_ms = (time.monotonic() - turn_start) * 1000
-                    turn_count += 1
-                    turns_since_switch += 1
-                    if turn_count == 1:
-                        log("[flow-local] ✅ First usable turn complete — session fully ready")
-                    await client_ws.send_json({"type": "turn_complete"})
-
-                    # Per-turn instrumentation
-                    metrics = {
-                        "turn_id": turn_count,
-                        "speech_duration_ms": round(segment_ms),
-                        "pre_stt_ms": round(pre_stt_ms),
-                        "stt_ms": round(stt_ms),
-                        "llm_ttft_ms": round(llm_ttft_ms),
-                        "llm_ms": round(llm_ms),
-                        "tts_first_audio_ms": round(tts_first_ms),
-                        "tts_total_ms": round(tts_total_ms),
-                        "total_ms": round(turn_ms),
-                        "source_lang": active_lang,
-                        "target_lang": target_lang,
-                    }
-                    log(f"[flow-local] METRICS: {json.dumps(metrics)}")
-                    # Per-stage durations (each stage in isolation)
-                    log(f"[flow-local] ⏱ PIPELINE  pre_stt={pre_stt_ms:.0f}ms | stt={stt_ms:.0f}ms | llm_ttft={llm_ttft_ms:.0f}ms | llm={llm_ms:.0f}ms | tts_first={tts_first_ms:.0f}ms | total={turn_ms:.0f}ms")
-                    # Cumulative timestamps from turn_start=0 (shows when user hears each stage)
-                    _t_stt_done  = pre_stt_ms + stt_ms
-                    _t_llm_tok   = _t_stt_done + llm_ttft_ms
-                    _t_tts_ready = _t_stt_done + tts_first_ms   # tts_first_ms anchored to llm_start≈stt_done
-                    log(f"[flow-local] ⏱ BREAKDOWN"
-                        f"  t0=0(stop_rx)"
-                        f"  t1={pre_stt_ms:.0f}(stt_start)"
-                        f"  t2={_t_stt_done:.0f}(stt_done)"
-                        f"  t3={_t_llm_tok:.0f}(llm_1st_tok)"
-                        f"  t4={_t_tts_ready:.0f}(audio_ready)"
-                        f"  t5={turn_ms:.0f}(done)"
-                        f"  — slowest={max(('pre_stt',pre_stt_ms),('stt',stt_ms),('llm_ttft',llm_ttft_ms),('llm',llm_ms),('tts_first',tts_first_ms),key=lambda x:x[1])[0]}")
+                    pending_vad_segment = speech_audio
+                    pending_vad_deadline = time.monotonic() + (TURN_COMMIT_DEBOUNCE_MS / 1000.0)
+                    log(f"[turn_hold] waiting {TURN_COMMIT_DEBOUNCE_MS}ms after VAD silence")
+                    continue
+                    # ── ALL STT + TRANSLATION MUST GO THROUGH _commit_segment() ──
+                    # Force release   → _commit_segment(audio, "force_release") above
+                    # VAD silence     → pending_vad_deadline timeout → _commit_segment(audio, "vad_silence")
+                    # Audio resumes   → pending cancelled, carryover merged → new segment
+                    # NO DIRECT PATH EXISTS BELOW THIS LINE.
 
                 elif event[0] == "speech_stopped_short":
+                    if carryover_segment is not None:
+                        segment_to_commit = carryover_segment
+                        carryover_segment = None
+                        if _force_release:
+                            await _commit_segment(segment_to_commit, "force_release")
+                        else:
+                            pending_vad_segment = segment_to_commit
+                            pending_vad_deadline = time.monotonic() + (TURN_COMMIT_DEBOUNCE_MS / 1000.0)
+                            log(f"[turn_hold] waiting {TURN_COMMIT_DEBOUNCE_MS}ms after VAD silence")
+                        continue
                     log("[flow-local] Short sound ignored — returning client to ready")
                     await safe_send(client_ws, {
                         "type": "turn_complete",
