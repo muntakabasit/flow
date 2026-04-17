@@ -1183,14 +1183,46 @@ def _is_incomplete_thought(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _should_apply_context(prev: str, current: str) -> bool:
-    """Gate the context-carry merge. True → prepend prev to current."""
+    """Gate the context-carry merge. True → prepend prev to current.
+
+    HOTFIX (D1.3): generic short/question merge disabled.
+    The old rule (short_current OR question_like) caused cross-turn
+    contamination — greetings, probes, and fresh standalone turns were
+    being merged with unrelated prior context, producing outputs like
+    "Alô. Hello, what's up?" or "What's happened?. Hello."
+
+    New rule: merge ONLY when the current turn contains an explicit
+    referential marker that implies dependence on the prior turn.
+    Everything else is treated as a fresh, standalone intent.
+    """
     if not prev or not current:
         return False
 
-    short_current  = len(current.split()) <= 4
-    question_like  = current.strip().endswith("?")
+    c = current.strip().lower().rstrip("?.!,;:")
 
-    return short_current or question_like
+    # Never merge greetings, simple probes, or short standalone turns.
+    _blocked: frozenset = frozenset({
+        "hello", "hi", "hey", "alô", "alo",
+        "what happened", "what's happening", "whats happening",
+        "what's up", "whats up",
+        "huh", "okay", "ok", "stop", "wait",
+    })
+    if c in _blocked:
+        return False
+
+    # Only merge when current explicitly refers back to prior context.
+    _referential: frozenset = frozenset({
+        "what should i do",
+        "what do i do",
+        "what do you mean",
+        "why is that",
+        "how do i fix that",
+        "what happened next",
+        "and then",
+        "so what now",
+        "what about that",
+    })
+    return c in _referential
 
 
 def _english_plausible_from_state(stable_lang: str | None, active_lang: str) -> bool:
