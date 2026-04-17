@@ -2445,6 +2445,55 @@ async def websocket_handler(client_ws: WebSocket):
                 log(f"[stt_override] from={detected_lang} to=en text=\"{text[:60]}\"")
                 detected_lang = "en"
 
+            # PT REPETITION GUARD — block hallucinated/looping Portuguese STT
+            # Fires only for Portuguese segments with ≥6 tokens (short valid PT passes freely).
+            # Three independent detection rules — any one triggers the block:
+            #   1. A single token repeats ≥5 times consecutively
+            #   2. Unique-token ratio < 0.3 (very low lexical diversity)
+            #   3. A 2- or 3-word phrase repeats ≥3 times anywhere in the segment
+            if str(detected_lang).startswith("pt"):
+                _pt_tokens = text.strip().lower().split()
+                _pt_n = len(_pt_tokens)
+                _pt_collapse = False
+                _pt_collapse_reason = ""
+
+                if _pt_n >= 6:
+                    # Rule 1 — consecutive single-token repeat
+                    _max_consec = _cur_consec = 1
+                    for _i in range(1, _pt_n):
+                        if _pt_tokens[_i] == _pt_tokens[_i - 1]:
+                            _cur_consec += 1
+                            _max_consec = max(_max_consec, _cur_consec)
+                        else:
+                            _cur_consec = 1
+                    if _max_consec >= 5:
+                        _pt_collapse = True
+                        _pt_collapse_reason = f"consec_repeat≥5 (max={_max_consec})"
+
+                    # Rule 2 — low unique/total ratio
+                    if not _pt_collapse:
+                        _ratio = len(set(_pt_tokens)) / _pt_n
+                        if _ratio < 0.3:
+                            _pt_collapse = True
+                            _pt_collapse_reason = f"low_diversity (unique/total={_ratio:.2f})"
+
+                    # Rule 3 — repeated bigram or trigram
+                    if not _pt_collapse:
+                        for _sz in (2, 3):
+                            _phrases = [" ".join(_pt_tokens[_j:_j+_sz]) for _j in range(_pt_n - _sz + 1)]
+                            for _ph in set(_phrases):
+                                if _phrases.count(_ph) >= 3:
+                                    _pt_collapse = True
+                                    _pt_collapse_reason = f"phrase_repeat≥3 ('{_ph}')"
+                                    break
+                            if _pt_collapse:
+                                break
+
+                if _pt_collapse:
+                    log(f"[pt_guard] repetition_collapse ({_pt_collapse_reason}): \"{text[:80]}\"")
+                    await client_ws.send_json({"type": "turn_complete", "skip_reason": "pt_repetition_collapse"})
+                    return
+
             # ── 3-lane gate: fast Lane C ────────────────────────────
             # Cheap checks that don't need the rescue chain.
             # Empty / floor / unknown-lang / gibberish → repeat-request.
