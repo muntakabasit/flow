@@ -2494,6 +2494,16 @@ async def websocket_handler(client_ws: WebSocket):
                     await client_ws.send_json({"type": "turn_complete", "skip_reason": "pt_repetition_collapse"})
                     return
 
+            # CONFIDENCE GUARD — short low-confidence turns
+            # Short phrases (≤4 words) with STT confidence < 0.85 are prone to
+            # subtle misrecognition (e.g. "helped" → "help", "you're" → "your").
+            # Drop them before translation rather than pass a plausible-but-wrong
+            # transcript. Longer turns and high-confidence turns are unaffected.
+            if len(text.split()) <= 4 and stt_confidence < 0.85:
+                log(f"[confidence_guard] short low-confidence turn: \"{text}\" conf={stt_confidence:.2f}")
+                await client_ws.send_json({"type": "turn_complete", "skip_reason": "low_confidence_short_turn"})
+                return
+
             # ── 3-lane gate: fast Lane C ────────────────────────────
             # Cheap checks that don't need the rescue chain.
             # Empty / floor / unknown-lang / gibberish → repeat-request.
