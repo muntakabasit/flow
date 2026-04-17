@@ -2394,6 +2394,12 @@ async def websocket_handler(client_ws: WebSocket):
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "stt_exception"})
                 return
 
+            # EMPTY STT GUARD — discard blank transcripts immediately
+            if not text.strip():
+                log(f"[stt_guard] empty transcript — skipped (conf={stt_confidence:.2f})")
+                await client_ws.send_json({"type": "turn_complete", "skip_reason": "empty_transcript"})
+                return
+
             # COMMIT QUALITY GUARD 2 — post-STT short-text quality gate
             # For transcripts ≤2 words: allow if in SHORT_ALLOWED or if the text is a
             # complete conversational intent (single-word question, greeting, etc.).
