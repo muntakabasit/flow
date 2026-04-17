@@ -2362,17 +2362,48 @@ async def websocket_handler(client_ws: WebSocket):
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "stt_exception"})
                 return
 
-            # COMMIT QUALITY GUARD 2 — post-STT text length check
-            # Very short transcripts (≤2 words) that are not in the allowed set are
-            # almost always fragments, noise, or hallucinated filler. Drop them before
-            # the rescue chain and translation pipeline run.
+            # COMMIT QUALITY GUARD 2 — post-STT short-text quality gate
+            # For transcripts ≤2 words: allow if in SHORT_ALLOWED or if the text is a
+            # complete conversational intent (single-word question, greeting, etc.).
+            # Block only confirmed incomplete-fragment patterns.
+            #
+            # Normalization: lowercase + strip whitespace + strip trailing punctuation.
+            # Matching is done on the normalized form so "What?" and "what" both match.
             _SHORT_ALLOWED: frozenset = frozenset({
-                "help me", "i'm fine", "stop", "wait", "okay",
+                # greetings
+                "hello", "hi", "hey",
+                # affirmatives / negatives
+                "yes", "no", "okay", "ok",
+                # commands
+                "stop", "wait", "help", "help me",
+                # wellbeing
+                "i'm fine", "im fine", "i'm okay", "im okay",
+                # common questions
+                "what happened", "what's happening", "whats happening",
+                "what", "who", "where", "when", "why", "how",
+                "huh",
             })
-            if len(text.split()) <= 2 and text.strip().lower() not in _SHORT_ALLOWED:
-                log(f"[commit_guard] short transcript not in allow-list: '{text}' — skipped")
-                await client_ws.send_json({"type": "turn_complete", "skip_reason": "commit_guard_short_text"})
-                return
+            # Incomplete-fragment patterns — block even if ≤2 words.
+            _FRAGMENT_PATTERNS: frozenset = frozenset({
+                "how i", "i am", "because i", "what if",
+                "i", "um", "uh", "er",
+            })
+            if len(text.split()) <= 2:
+                # Normalize: lowercase, strip whitespace, remove trailing punctuation.
+                _norm = text.strip().lower().rstrip("?.!,;:")
+                if _norm in _SHORT_ALLOWED:
+                    pass   # explicit allow — proceed to STT pipeline
+                elif _norm in _FRAGMENT_PATTERNS:
+                    log(f"[commit_guard] incomplete fragment: '{text}' — skipped")
+                    await client_ws.send_json({"type": "turn_complete", "skip_reason": "commit_guard_fragment"})
+                    return
+                elif not _norm:
+                    log(f"[commit_guard] empty after normalization — skipped")
+                    await client_ws.send_json({"type": "turn_complete", "skip_reason": "commit_guard_empty"})
+                    return
+                # Single-word or two-word text not in either set → allow through.
+                # The downstream guards (Lane C, incomplete-thought, confidence floor)
+                # will catch true garbage. Over-blocking here costs real utterances.
 
             # P3.5 STT SANITY GUARD — correct obvious pt→en misclassification.
             # Whisper sometimes labels clear English as pt after a prior PT turn.
