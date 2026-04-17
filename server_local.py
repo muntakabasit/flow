@@ -2320,11 +2320,10 @@ async def websocket_handler(client_ws: WebSocket):
                 return
 
             # COMMIT QUALITY GUARD 1 — minimum duration before STT
-            # Segments shorter than 900ms are almost always fragmented speech,
-            # trailing breath, or a spurious VAD trigger. Skip them before
-            # spending GPU time on transcription.
-            if segment_ms < 900:
-                log(f"[commit_guard] segment too short for STT ({segment_ms}ms < 900ms) — skipped")
+            # Segments under 500ms are noise/breath/spurious VAD triggers.
+            # 500–900ms are allowed through to STT (short but potentially valid).
+            if segment_ms < 500:
+                log(f"[commit_guard] segment too short for STT ({segment_ms}ms < 500ms) — skipped")
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "commit_guard_short"})
                 return
 
