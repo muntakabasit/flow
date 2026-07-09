@@ -29,6 +29,7 @@ import base64
 import time
 import traceback
 import re
+import errno
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
@@ -43,6 +44,8 @@ from websockets.exceptions import ConnectionClosedError
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+
+from flow_error_logger import writeFlowErrorLog
 
 
 # Error codes for structured error handling
@@ -108,7 +111,7 @@ VAD_THRESHOLD = 0.5
 VAD_NEG_THRESHOLD = 0.35
 SILENCE_DURATION_MS = 700         # trailing silence trimmed from buffer on release — not used for auto-end
 MIN_SPEECH_MS = 350               # allow shorter natural turns without feeling delayed
-MAX_SPEECH_S = 60                 # safety hard cap — user controls end via button release; 60s covers longest natural turns
+MAX_SPEECH_S = 300                # safety hard cap — user controls end via button release; 300s covers extended natural turns
 AUDIO_TIMEOUT_MS = 60000          # 60s — covers cold LLM+TTS on first turn; client sends no audio during processing
 VAD_WINDOW = 512                  # silero window size in samples
 VAD_CONTEXT = 64                  # silero context size
@@ -2283,6 +2286,11 @@ async def websocket_handler(client_ws: WebSocket):
     pending_vad_segment = None
     pending_vad_deadline = None
     carryover_segment = None
+    turn_audio_bytes = 0
+    turn_audio_samples = 0
+    turn_audio_abs_sum = 0.0
+    turn_audio_peak = 0.0
+    turn_vad_speech_detected = False
 
     # Send ready (wait for client to send mode preference)
     await client_ws.send_json({
@@ -2308,6 +2316,34 @@ async def websocket_handler(client_ws: WebSocket):
             log(f"[flow-local] Session prewarm error (non-fatal): {e}")
 
     asyncio.create_task(_session_prewarm())
+
+    def _reset_turn_audio_stats():
+        nonlocal turn_audio_bytes, turn_audio_samples, turn_audio_abs_sum, turn_audio_peak
+        nonlocal turn_vad_speech_detected
+        turn_audio_bytes = 0
+        turn_audio_samples = 0
+        turn_audio_abs_sum = 0.0
+        turn_audio_peak = 0.0
+        turn_vad_speech_detected = False
+
+    def _log_orb_release_stats(skip_reason):
+        avg_amp = (turn_audio_abs_sum / turn_audio_samples) if turn_audio_samples else 0.0
+        duration_ms = (turn_audio_samples / INPUT_SAMPLE_RATE) * 1000 if turn_audio_samples else 0.0
+        vad_speech_detected = bool(
+            turn_vad_speech_detected
+            or vad.is_speaking
+            or pending_vad_segment is not None
+            or carryover_segment is not None
+        )
+        log(
+            f"[orb_release] bytes={turn_audio_bytes}"
+            f" samples={turn_audio_samples}"
+            f" duration_ms={duration_ms:.0f}"
+            f" vad_speech_detected={str(vad_speech_detected).lower()}"
+            f" skip_reason={skip_reason}"
+            f" avg_amp={avg_amp:.6f}"
+            f" peak_amp={turn_audio_peak:.6f}"
+        )
 
     # Keepalive: ping at interval to detect stale connections
     async def keepalive():
@@ -2347,6 +2383,8 @@ async def websocket_handler(client_ws: WebSocket):
 
             # Guard: skip tiny segments that are usually noise/trailing breaths
             if segment_ms < MIN_SPEECH_SEGMENT_MS:
+                if commit_reason == "force_release":
+                    _log_orb_release_stats("short_segment")
                 log(f"[flow-local] Turn skipped: short_segment ({segment_ms}ms < {MIN_SPEECH_SEGMENT_MS}ms)")
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "short_segment"})
                 return
@@ -2355,6 +2393,8 @@ async def websocket_handler(client_ws: WebSocket):
             # Segments under 300ms are accidental taps or noise.
             # 300–500ms are short but plausible human speech (e.g. "hi", "stop", "yes").
             if segment_ms < 300:
+                if commit_reason == "force_release":
+                    _log_orb_release_stats("commit_guard_short")
                 log(f"[commit_guard] segment too short for STT ({segment_ms}ms < 300ms) — skipped")
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "commit_guard_short"})
                 return
@@ -2396,6 +2436,8 @@ async def websocket_handler(client_ws: WebSocket):
 
             # EMPTY STT GUARD — discard blank transcripts immediately
             if not text.strip():
+                if commit_reason == "force_release":
+                    _log_orb_release_stats("empty_transcript")
                 log(f"[stt_guard] empty transcript — skipped (conf={stt_confidence:.2f})")
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "empty_transcript"})
                 return
@@ -2505,7 +2547,7 @@ async def websocket_handler(client_ws: WebSocket):
             # subtle misrecognition (e.g. "helped" → "help", "you're" → "your").
             # Drop them before translation rather than pass a plausible-but-wrong
             # transcript. Longer turns and high-confidence turns are unaffected.
-            if len(text.split()) <= 4 and stt_confidence < 0.85:
+            if len(text.split()) <= 3 and stt_confidence < 0.75:
                 log(f"[confidence_guard] short low-confidence turn: \"{text}\" conf={stt_confidence:.2f}")
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "low_confidence_short_turn"})
                 return
@@ -2868,6 +2910,8 @@ async def websocket_handler(client_ws: WebSocket):
                 f"  t5={turn_ms:.0f}(done)"
                 f"  — slowest={max(('pre_stt',pre_stt_ms),('stt',stt_ms),('llm_ttft',llm_ttft_ms),('llm',llm_ms),('tts_first',tts_first_ms),key=lambda x:x[1])[0]}")
         finally:
+            if commit_reason == "force_release":
+                _reset_turn_audio_stats()
             _force_release = False
 
     try:
@@ -3036,6 +3080,8 @@ async def websocket_handler(client_ws: WebSocket):
                 # Commit immediately — no debounce wait.
                 log("[release_signal] explicit_orb_release")
                 if chunks_received == 0:
+                    _log_orb_release_stats("no_audio_received")
+                    _reset_turn_audio_stats()
                     log("[flow-local] ⚠️ Zero-chunk release — no audio yet, session not ready (ignored)")
                     await client_ws.send_json({
                         "type": "turn_complete",
@@ -3062,12 +3108,15 @@ async def websocket_handler(client_ws: WebSocket):
                         await _commit_segment(segment_to_commit, "force_release")
                         continue
                     _force_release = False
+                    _log_orb_release_stats("release_no_speech")
+                    _reset_turn_audio_stats()
                     log("[flow-local] ⚠️ Release with VAD idle — no speech detected, turn skipped")
                     await client_ws.send_json({
                         "type": "turn_complete",
                         "skip_reason": "release_no_speech",
                     })
                     continue
+                _log_orb_release_stats("none")
                 log(f"[flow-local] orb_released → force_finalize ({len(events)} event(s))")
 
             elif msg_type == "speech_stopped":
@@ -3107,6 +3156,12 @@ async def websocket_handler(client_ws: WebSocket):
 
                 # Decode browser audio (24kHz float32)
                 audio_24k = decode_browser_audio(msg["audio"])
+                if len(audio_24k) > 0:
+                    abs_audio = np.abs(audio_24k)
+                    turn_audio_bytes += int(len(audio_24k) * 2)
+                    turn_audio_samples += int(len(audio_24k))
+                    turn_audio_abs_sum += float(np.sum(abs_audio))
+                    turn_audio_peak = max(turn_audio_peak, float(np.max(abs_audio)))
 
                 # Resample to 16kHz for VAD + Whisper
                 audio_16k = resample(audio_24k, INPUT_SAMPLE_RATE, VAD_SAMPLE_RATE)
@@ -3117,6 +3172,7 @@ async def websocket_handler(client_ws: WebSocket):
             for event in events:
                 if event[0] == "speech_started":
                     speech_start_time = time.monotonic()
+                    turn_vad_speech_detected = True
                     log("[flow-local] Speech started")
                     await client_ws.send_json({"type": "speech_started"})
 
@@ -3292,4 +3348,14 @@ if __name__ == "__main__":
     log("  ║   http://localhost:8765               ║")
     log("  ╚══════════════════════════════════════╝")
     log("")
-    uvicorn.run(app, host="0.0.0.0", port=8765)
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=8765)
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            writeFlowErrorLog(
+                "server",
+                "port_bind_failed",
+                "Failed to bind FLOW local server port 8765.",
+                str(exc),
+            )
+        raise

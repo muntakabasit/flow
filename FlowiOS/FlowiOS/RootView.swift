@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct RootView: View {
-    @StateObject private var session = FlowSession()
+    @ObservedObject var session: FlowSession
 
     // URL editor — triggered by long-pressing the status bar.
     // Lets you update the Cloudflare tunnel URL without rebuilding the app.
@@ -51,8 +51,8 @@ struct RootView: View {
                         pendingSourceLang: activeSourceLang,
                         liveTranscript: session.liveTranscript,
                         skipFlash: session.skipFlash,
-                        onPressDown: { session.pressDown() },
-                        onRelease:   { session.pressUp() }
+                        captureState: session.captureState,
+                        onTap: { session.toggleCapture() }
                     )
                     .padding(.top, 28)
                     .padding(.bottom, 20)

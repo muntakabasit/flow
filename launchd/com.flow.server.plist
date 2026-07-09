@@ -7,40 +7,49 @@
     <key>Label</key>
     <string>com.flow.server</string>
 
-    <!-- Points to ~/.flow/launch_server.sh — internal SSD, always available.
-         The wrapper waits for /Volumes/homelab to mount, then delegates to
-         the canonical start_flow_server.sh on the external volume.
+    <!-- Call venv python directly in FOREGROUND — do NOT use start_flow_server.sh.
+         That script uses nohup + background (&), which causes launchd to lose the
+         process PID immediately and restart the wrapper every ThrottleInterval.
+         launchd requires a process that stays in the foreground.
          HOMEPLACEHOLDER is substituted with $HOME by install_launchd.sh. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>HOMEPLACEHOLDER/.flow/launch_server.sh</string>
+        <string>HOMEPLACEHOLDER/ofa_jack_agent/projects/flow/.venv/bin/python3</string>
+        <string>server_local.py</string>
     </array>
 
-    <!-- No WorkingDirectory — launch_server.sh cds into the repo after
-         the volume is confirmed mounted. start_flow_server.sh also cds. -->
+    <!-- WorkingDirectory must be set so server_local.py can find its siblings
+         (models, config files). cd to the repo root. -->
+    <key>WorkingDirectory</key>
+    <string>HOMEPLACEHOLDER/ofa_jack_agent/projects/flow</string>
 
-    <!-- Homebrew python3 must be on PATH for the server to start -->
+    <!-- Venv python needs HOME for mlx cache, Piper model paths, etc. -->
     <key>EnvironmentVariables</key>
     <dict>
+        <key>HOME</key>
+        <string>HOMEPLACEHOLDER</string>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>HOMEPLACEHOLDER/ofa_jack_agent/projects/flow/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 
     <key>RunAtLoad</key>
     <true/>
 
+    <!-- Restart on any non-zero exit or crash. Do NOT restart on clean exit (0)
+         so a deliberate "stop server" is honoured without fighting launchd. -->
     <key>KeepAlive</key>
     <dict>
         <key>SuccessfulExit</key>
         <false/>
     </dict>
 
+    <!-- 30s minimum between restarts — covers mlx-whisper + Piper model warmup
+         so a crash loop doesn't hammer the GPU during recovery. -->
     <key>ThrottleInterval</key>
     <integer>30</integer>
 
-    <!-- Home-dir log — must be on internal SSD so launchd can open the fd
-         before /Volumes/homelab is mounted. HOMEPLACEHOLDER → real $HOME. -->
+    <!-- Logs on internal SSD — always writable, survives any future volume changes.
+         HOMEPLACEHOLDER → real $HOME via install_launchd.sh. -->
     <key>StandardOutPath</key>
     <string>HOMEPLACEHOLDER/.flow/launchd_server.log</string>
     <key>StandardErrorPath</key>

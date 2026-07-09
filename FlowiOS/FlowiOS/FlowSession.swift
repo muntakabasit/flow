@@ -18,6 +18,13 @@ enum AppState: Equatable {
     case speaking
 }
 
+// CAPTURE MODE V1 — tap-to-record state machine
+enum CaptureState {
+    case idle        // orb not active
+    case recording   // mic running, audio streaming
+    case committing  // mic stopped, waiting for server to finish turn
+}
+
 enum ConnStatus: Equatable {
     case online        // WebSocket open
     case reconnecting  // dropped, auto-retry in progress
@@ -191,6 +198,8 @@ final class FlowSession: ObservableObject {
     @Published var liveTranscript   = ""
     @Published var connStatus: ConnStatus = .offline   // SC-01: drives connection dot in TrustBarView
     @Published var skipFlash        = ""               // SC-03: brief "Nothing heard" on VAD idle release
+    @Published var captureState: CaptureState = .idle  // CAPTURE_MODE_V1: tap-to-record
+    @Published var errorText: String? = nil
 
     // Source lang of the in-flight turn. Set by source_transcript, cleared on turn commit.
     @Published var pendingSourceLang: String? = nil
@@ -222,14 +231,23 @@ final class FlowSession: ObservableObject {
         ws.onConnect    = { [weak self] in
             self?.hasEverConnected = true
             self?.connStatus = .online
+            self?.errorText = nil
         }
         ws.onGiveUp     = { [weak self] in
             // P0.3: if we were connected before, show reconnecting not offline —
             // offline is reserved for "never successfully connected this session"
             guard let self else { return }
             self.connStatus = self.hasEverConnected ? .reconnecting : .offline
+            self.errorText = "Connection lost"
         }
         ws.connect()
+        // FLOW_APP_LOG_FILE_V1: manual test write — confirms log path is live on first launch
+        writeFlowErrorLog(
+            area:    "diagnostic",
+            event:   "manual_test",
+            message: "Flow diagnostic log write test",
+            details: "FLOW_APP_LOG_FILE_V1"
+        )
     }
 
     // MARK: Repeat last output (REPEAT_LAST_OUTPUT_V1) -------------------------
@@ -262,20 +280,54 @@ final class FlowSession: ObservableObject {
         ws.setURL(urlString)
     }
 
-    // MARK: Press / Release (spec §4) -----------------------------------------
+    // MARK: Capture Mode V1 — tap-to-record (replaces hold-to-talk) ---------------
 
-    func pressDown() {
-        // Block new press if turn is still resolving (spec §10 — no state corruption).
+    // CAPTURE_UX_SMOOTHING_V1 timing constants
+    private static let captureMinDurationMs: Int = 800   // minimum recording before stop is honoured
+    private static let captureGraceMs: Int       = 150   // trailing-edge grace window after stop tap
+
+    // Wallclock timestamp set when startCapture() arms the mic.
+    // Used to enforce captureMinDurationMs before stopCapture() can fire.
+    private var captureStartTime: Date?
+
+    // Commit lock — prevents duplicate stop execution from rapid taps or timer re-entry.
+    private var isStopping: Bool = false
+
+    // Generation counter — incremented on every startCapture().
+    // Deferred stop/grace callbacks capture this value and bail if it no longer matches,
+    // ensuring engine-reset between schedule and fire cannot cause stale commits.
+    private var captureGeneration: Int = 0
+
+    func startCapture() {
+        // AUDIO_STABILITY_GATE_V1: block capture during hardware settling window.
+        // After a route change (AirPods connect/disconnect), the engine format is
+        // temporarily invalid. Let iOS settle for 500ms before touching the engine.
+        if let t = capture.lastRouteChangeTime {
+            let elapsed = Date().timeIntervalSince(t)
+            if elapsed < 0.5 {
+                print("[audio] start blocked — route not stable yet (\(Int((0.5 - elapsed) * 1000))ms remaining)")
+                return
+            }
+        }
+        // Block new capture if turn is still resolving (spec §10 — no state corruption).
         guard state == .ready else { return }
         // Block if socket is not live — mic must not start while reconnecting/offline.
         // Tap while reconnecting bypasses the retry timer for immediate attempt.
         guard connStatus == .online else { ws.reconnectNow(); return }
 
-        finalizeEmitted = false
-        liveTranscript  = ""
+        finalizeEmitted   = false
+        liveTranscript    = ""
         pendingSourceLang = nil
+        if errorText != "Connection lost" {
+            errorText = nil
+        }
 
         tts.stop()          // barge-in: silence any speaking TTS from prior turn
+        captureGeneration += 1            // new session — invalidates any prior deferred callbacks
+        captureState      = .recording
+        captureStartTime  = Date()
+        print("[client] capture_started")
+
         state = .listening
         light.impactOccurred()
         light.prepare()
@@ -283,25 +335,88 @@ final class FlowSession: ObservableObject {
         capture.start { [weak self] pcm in self?.ws.sendAudio(pcm) }
     }
 
-    func pressUp() {
-        print("RELEASE FIRED")
+    func stopCapture() {
+        guard captureState == .recording else { return }
+        guard captureStartTime != nil else { return }   // nil → engine reset cleared session, bail
+        if isStopping { return }
+        isStopping = true
+        print("[client] capture_stop_requested")
+
+        // Snapshot generation at entry. Both deferred closures check this before
+        // continuing — if engine reset fired between schedule and fire, the counter
+        // will have been incremented and the callbacks abort cleanly.
+        let myGeneration = captureGeneration
+
+        // CAPTURE_UX_SMOOTHING_V1 — minimum duration guard.
+        // If the user taps stop before captureMinDurationMs has elapsed,
+        // wait out the remainder then re-enter stopCapture via a one-shot timer.
+        let elapsed = Int((Date().timeIntervalSince(captureStartTime ?? Date()) * 1000))
+        let remaining = FlowSession.captureMinDurationMs - elapsed
+        if remaining > 0 {
+            print("[client] capture_stop_delayed_min_duration (remaining \(remaining)ms)")
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(remaining)) { [weak self] in
+                guard let self else { return }
+                guard self.captureGeneration == myGeneration else {
+                    self.isStopping = false
+                    print("[client] stale_stop_ignored")
+                    return
+                }
+                self.isStopping = false   // release lock so re-entered stopCapture() can proceed
+                self.stopCapture()
+            }
+            return
+        }
+
+        // CAPTURE_UX_SMOOTHING_V1 — stop grace window.
+        // Let the mic run for captureGraceMs more to catch the trailing edge of speech,
+        // then commit. The DispatchQueue.main.asyncAfter below is the only timer added.
+        print("[client] capture_stop_grace_window (\(FlowSession.captureGraceMs)ms)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(FlowSession.captureGraceMs)) { [weak self] in
+            guard let self else { return }
+            guard self.captureState == .recording, self.captureGeneration == myGeneration else {
+                self.isStopping = false
+                print("[client] stale_stop_ignored")
+                return
+            }
+            self._commitStopCapture()
+        }
+    }
+
+    /// Internal: performs the actual mic-stop + orb_released send.
+    /// Only called from the grace-window closure — never directly.
+    private func _commitStopCapture() {
         capture.stop()
-        // Only send end_of_utterance if server hasn't already ended the turn.
+        captureState = .committing
+        // Only send orb_released if server hasn't already ended the turn.
         // spec §4: "Only ONE finalize per turn"
         guard !finalizeEmitted else { return }
         guard state == .listening else { return }
         finalizeEmitted = true
         playReleaseTone()          // immediate non-verbal cue: fires exactly once per valid release
+        print("[client] orb_released (capture_mode)")
         guard ws.sendEndOfUtterance() else {
             // WS not open — finalize couldn't be sent, server doesn't know turn ended.
-            // Fall back to .ready so the user can press again once connected.
-            print("[Session] pressUp — WS not open, resetting to ready")
+            // Fall back to .ready so the user can tap again once connected.
+            print("[Session] stopCapture — WS not open, resetting to ready")
+            captureState = .idle
             returnToReady()
             return
         }
+        isStopping = false
         state = .processing
         armProcessingPresenceCue()
         startWatchdog()
+    }
+
+    func toggleCapture() {
+        switch captureState {
+        case .idle:
+            startCapture()
+        case .recording:
+            stopCapture()
+        case .committing:
+            break   // busy — ignore taps while server is processing
+        }
     }
 
     // MARK: Server message handler (spec §6) ----------------------------------
@@ -313,12 +428,12 @@ final class FlowSession: ObservableObject {
 
         case "speech_started":
             // Server confirms it heard audio — no state change needed.
-            // Client is already .listening from pressDown().
+            // Client is already .listening from startCapture().
             break
 
         case "speech_stopped":
-            // Server hit the 60s hard cap. Normal turn end is via pressUp() only.
-            // Stop capture immediately. Mark finalize as done so pressUp() is a no-op.
+            // Server hit the 60s hard cap. Normal turn end is via stopCapture() only.
+            // Stop capture immediately. Mark finalize as done so stopCapture() is a no-op.
             capture.stop()
             if !finalizeEmitted {
                 finalizeEmitted = true
@@ -458,6 +573,7 @@ final class FlowSession: ObservableObject {
         // Client must reset to READY and not crash. spec §7.
         print("[FLOW][ERROR] WebSocket disconnected — reconnecting")
         connStatus = .reconnecting
+        errorText = "Connection lost"
         capture.stop()
         returnToReady()
     }
@@ -475,7 +591,7 @@ final class FlowSession: ObservableObject {
         success.notificationOccurred(.success)
     }
 
-    private func startWatchdog(after seconds: Double = 6) {
+    private func startWatchdog(after seconds: Double = 10) {  // CLIENT_STABILITY_V1: raised from 6s — cold Ollama inference can exceed 6s
         watchdog?.cancel()
         let item = DispatchWorkItem { [weak self] in
             guard let self, self.state == .processing else { return }
@@ -521,8 +637,48 @@ final class FlowSession: ObservableObject {
         finalizeEmitted = false
         liveTranscript   = ""
         pendingSourceLang = nil
+        captureState     = .idle    // CAPTURE_MODE_V1: always reset on return-to-ready
+        captureStartTime = nil      // CAPTURE_UX_SMOOTHING_V1: clear timestamp
+        isStopping       = false    // commit lock: always clear on return-to-ready
         ws.sendTTSPlaybackDone()   // always clear server echo-suppression state
         state = .ready
+    }
+
+    // MARK: Diagnostic log (FLOW_APP_LOG_FILE_V1) ------------------------------
+    //
+    // Writes a single JSON file to Documents/flow_latest_error.json.
+    // Overwrites on every call — keeps only the latest entry (no history).
+    // No networking, no external integrations.
+
+    private func writeFlowErrorLog(area: String, event: String,
+                                   message: String, details: String) {
+        let fm = FileManager.default
+        guard let docs = fm.urls(for: .documentDirectory,
+                                  in: .userDomainMask).first else {
+            print("[flow-log] ERROR: could not resolve Documents directory")
+            return
+        }
+        let url = docs.appendingPathComponent("flow_latest_error.json")
+
+        let iso = ISO8601DateFormatter()
+        let payload: [String: Any] = [
+            "timestamp": iso.string(from: Date()),
+            "area":      area,
+            "event":     event,
+            "message":   message,
+            "details":   details
+        ]
+
+        do {
+            let data = try JSONSerialization.data(
+                withJSONObject: payload,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+            try data.write(to: url, options: .atomic)
+            print("[flow-log] written → \(url.path)")
+        } catch {
+            print("[flow-log] write failed: \(error)")
+        }
     }
 }
 
@@ -566,6 +722,11 @@ final class AudioCapture {
     private var running   = false
     private var sessionOK = false
 
+    // AUDIO_STABILITY_GATE_V1: timestamp of last route change.
+    // startCapture() checks this and blocks for 500ms after any route change
+    // so the engine is never touched during an unstable hardware transition.
+    var lastRouteChangeTime: Date?
+
     func prepareSession() {
         guard !sessionOK else { return }
         do {
@@ -576,28 +737,57 @@ final class AudioCapture {
         } catch {
             print("[Capture] session prepare error: \(error)")
         }
+        // Register minimal route-change observer — stamps lastRouteChangeTime only.
+        // No engine teardown, no session manipulation.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteChange),
+            name: AVAudioSession.routeChangeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleRouteChange() {
+        lastRouteChangeTime = Date()
+        print("[audio] route_change detected — stabilizing")
     }
 
     func start(onBuffer: @escaping (Data) -> Void) {
         guard !running else { return }
         if !sessionOK { prepareSession() }
-        running = true
+        print("[audio] start requested")
 
+        // Read format immediately before installTap — never use a cached value.
+        // The hardware format can change between prepareSession and now (e.g. route change).
         let input = engine.inputNode
         let fmt   = input.outputFormat(forBus: 0)
-        nativeHz  = fmt.sampleRate
 
-        input.removeTap(onBus: 0)
+        // Validate format before touching the tap — installTap with an invalid format
+        // causes the "format.sampleRate == hwFormat.sampleRate" assertion crash.
+        guard fmt.sampleRate > 0, fmt.channelCount > 0 else {
+            print("[audio] invalid hardware format (sr=\(fmt.sampleRate) ch=\(fmt.channelCount)) — aborting start")
+            return
+        }
+
+        nativeHz = fmt.sampleRate
+        print("[audio] installing tap sr=\(Int(fmt.sampleRate)) ch=\(fmt.channelCount)")
+
+        input.removeTap(onBus: 0)   // clear any residual tap before installing
         input.installTap(onBus: 0, bufferSize: 1_024, format: fmt) { [weak self] buf, _ in
             guard let self, let ch = buf.floatChannelData?[0] else { return }
             onBuffer(self.resample(ch, count: Int(buf.frameLength)))
         }
 
+        running = true   // set after tap installs successfully — never before
+
         if !engine.isRunning {
-            do { try engine.start() } catch {
-                print("[Capture] engine start error: \(error)")
+            do {
+                try engine.start()
+                print("[audio] engine started")
+            } catch {
+                print("[audio] engine start failed: \(error)")
                 input.removeTap(onBus: 0)
-                running = false
+                running = false   // reset — caller can retry on next tap
             }
         }
     }

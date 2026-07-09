@@ -394,10 +394,8 @@ struct OrbView: View {
     let pendingSourceLang: String?
     let liveTranscript: String
     let skipFlash: String              // SC-03: "Nothing heard" on VAD idle release
-    let onPressDown: () -> Void
-    let onRelease:   () -> Void
-
-    @State private var pressed = false
+    let captureState: CaptureState     // CAPTURE_MODE_V1: drives tap-to-record visuals
+    let onTap: () -> Void              // CAPTURE_MODE_V1: tap toggles record/stop
 
     var body: some View {
         VStack(spacing: 16) {
@@ -413,18 +411,11 @@ struct OrbView: View {
                 .animation(.easeInOut(duration: 0.18), value: state)
 
             FlowWaveformView(state: state)
-                .scaleEffect(pressed ? 0.94 : 1.0)
-                .animation(.spring(response: 0.28, dampingFraction: 0.65), value: pressed)
+                .scaleEffect(captureState == .recording ? 0.94 : 1.0)
+                .animation(.spring(response: 0.28, dampingFraction: 0.65), value: captureState)
                 .defersSystemGestures(on: .bottom)
-                .highPriorityGesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { _ in
-                            if !pressed { pressed = true; onPressDown() }
-                        }
-                        .onEnded { _ in
-                            pressed = false; onRelease()
-                        }
-                )
+                .contentShape(Circle())
+                .onTapGesture { onTap() }
 
             // Label below orb — priority: liveTranscript > skipFlash > state label
             Group {
@@ -464,7 +455,7 @@ struct OrbView: View {
 
     private var orbLabel: String {
         switch state {
-        case .ready:      return "READY"       // SC-04: no instruction, just state
+        case .ready:      return captureState == .idle ? "TAP TO RECORD" : "READY"
         case .listening:  return "LISTENING…"
         case .processing: return "HEARD YOU"
         case .speaking:   return "SPEAKING…"

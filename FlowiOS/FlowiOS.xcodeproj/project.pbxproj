@@ -22,7 +22,7 @@
 
 /* Begin PBXFileReference section */
 		085758CED45C43FDD7E6955C /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
-		41378D2523E9E6F78162A387 /* FlowiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FlowiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		41378D2523E9E6F78162A387 /* FlowiOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FlowiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4BCFD1CA3DA77BAA14C46F11 /* ReadyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadyView.swift; sourceTree = "<group>"; };
 		5F081DDEA2A607E22233A45F /* ListeningView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListeningView.swift; sourceTree = "<group>"; };
 		63284591E0AF91756A78E6B4 /* ResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultView.swift; sourceTree = "<group>"; };
@@ -101,11 +101,6 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
-				TargetAttributes = {
-					04266B6180247ACBB3FDE882 = {
-						DevelopmentTeam = "";
-					};
-				};
 			};
 			buildConfigurationList = 8565B9CE14032154788B66FC /* Build configuration list for PBXProject "FlowiOS" */;
 			developmentRegion = en;
@@ -162,8 +157,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = "";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 73SGN3L65R;
 				INFOPLIST_FILE = FlowiOS/Info.plist;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Flow needs microphone access to interpret speech.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "";
@@ -175,6 +171,7 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.flow.FlowiOS;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -303,8 +300,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = "";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 73SGN3L65R;
 				INFOPLIST_FILE = FlowiOS/Info.plist;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Flow needs microphone access to interpret speech.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "";
@@ -316,6 +314,7 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.flow.FlowiOS;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

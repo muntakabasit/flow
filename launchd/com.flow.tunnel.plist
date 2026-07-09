@@ -8,8 +8,9 @@
     <string>com.flow.tunnel</string>
 
     <!-- cloudflared binary on internal SSD (Homebrew) — no volume dependency.
-         Reads tunnel config from ~/.cloudflared/config.yml (home dir, always available).
-         Path must match: which cloudflared on the Mac mini. -->
+         Reads tunnel credentials from ~/.cloudflared/<tunnel-uuid>.json.
+         PREREQUISITE: cloudflared tunnel login must have been run first.
+         Path verified: which cloudflared → /opt/homebrew/bin/cloudflared. -->
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/cloudflared</string>
@@ -18,22 +19,30 @@
         <string>flow</string>
     </array>
 
-    <!-- No WorkingDirectory — cloudflared reads ~/.cloudflared/config.yml directly -->
+    <!-- cloudflared resolves credential paths relative to $HOME (~/.cloudflared/).
+         Explicit HOME ensures the correct user home is visible in a launchd context. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>HOMEPLACEHOLDER</string>
+    </dict>
 
     <key>RunAtLoad</key>
     <true/>
 
+    <!-- Restart on crash or non-zero exit. Do NOT restart on clean exit (0)
+         so a deliberate kill is honoured without fighting launchd. -->
     <key>KeepAlive</key>
     <dict>
         <key>SuccessfulExit</key>
         <false/>
     </dict>
 
+    <!-- 15s between restarts — tunnel reconnects faster than server coldstart. -->
     <key>ThrottleInterval</key>
     <integer>15</integer>
 
-    <!-- Home-dir log — no volume dependency.
-         HOMEPLACEHOLDER → real $HOME via install_launchd.sh. -->
+    <!-- Logs on internal SSD. HOMEPLACEHOLDER → real $HOME via install_launchd.sh. -->
     <key>StandardOutPath</key>
     <string>HOMEPLACEHOLDER/.flow/launchd_tunnel.log</string>
     <key>StandardErrorPath</key>
