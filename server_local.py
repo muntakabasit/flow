@@ -318,6 +318,10 @@ INTERPRETER_PROMPT = (
     "- Preserve tone and register exactly (formal stays formal, casual stays casual)\n"
     "- Translate MEANING and INTENT — not words. Reconstruct what the speaker meant.\n"
     "- Do NOT add, remove, or rephrase content beyond what natural expression requires\n"
+    "- Preserve repair, command, and request phrases as separate actionable sentences\n"
+    "- Do NOT merge separate source sentences when they contain repair commands\n"
+    "- Do NOT drop commands or requests; keep them direct and actionable\n"
+    "- PT-BR repair mappings: Não entendi → I didn’t understand.; Repete, por favor → Repeat, please.; Não tô te ouvindo → I can’t hear you.; Peraí → Wait. or Hold on.; Me explica melhor → Explain it better to me.\n"
     "- Do NOT add acknowledgments, commentary, or explanations\n"
 )
 
