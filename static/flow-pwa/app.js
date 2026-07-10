@@ -5,6 +5,9 @@ const RECONNECT_DELAYS = [500, 1000, 2000, 4000, 8000, 15000];
 const PRECONNECT_CHUNK_LIMIT = 12;
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
+if (!document.getElementById('orbBtn')) {
+  throw new Error('[Flow] #orbBtn not found — HTML/JS version mismatch. Hard-reload the page.');
+}
 const orbBtn          = document.getElementById('orbBtn');
 const orbPress        = document.getElementById('orbPress');
 const orbWrap         = document.getElementById('orbWrap');
