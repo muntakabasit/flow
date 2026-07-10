@@ -3,198 +3,767 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#0D0D0D">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Flow">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon-192.png">
-  <link rel="apple-touch-startup-image" href="splash-iphone-1290x2796.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
-  <link rel="apple-touch-startup-image" href="splash-iphone-2796x1290.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
-  <link rel="apple-touch-startup-image" href="splash-ipad-2048x2732.png" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
-  <link rel="apple-touch-startup-image" href="splash-ipad-2732x2048.png" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="splash-iphone-1290x2796.png"
+        media="(device-width:430px) and (device-height:932px) and (-webkit-device-pixel-ratio:3) and (orientation:portrait)">
+  <link rel="apple-touch-startup-image" href="splash-iphone-2796x1290.png"
+        media="(device-width:430px) and (device-height:932px) and (-webkit-device-pixel-ratio:3) and (orientation:landscape)">
+  <link rel="apple-touch-startup-image" href="splash-ipad-2048x2732.png"
+        media="(device-width:1024px) and (device-height:1366px) and (-webkit-device-pixel-ratio:2) and (orientation:portrait)">
+  <link rel="apple-touch-startup-image" href="splash-ipad-2732x2048.png"
+        media="(device-width:1024px) and (device-height:1366px) and (-webkit-device-pixel-ratio:2) and (orientation:landscape)">
   <title>Flow</title>
   <style>
-    :root {
-      color-scheme: light;
-      --paper: #FFFEF9;
-      --ink: #1A1A1A;
-      --muted: #676767;
-      --line: #DDD8CC;
-      --gold: #D4AF37;
-      --action: #0D0D0D;
-      --green: #10B981;
-      --amber: #F59E0B;
-      --red: #EF4444;
-      --safe-top: env(safe-area-inset-top, 0px);
-      --safe-right: env(safe-area-inset-right, 0px);
-      --safe-bottom: env(safe-area-inset-bottom, 0px);
-      --safe-left: env(safe-area-inset-left, 0px);
-    }
-
-    * { box-sizing: border-box; }
-    html, body { min-height: 100%; margin: 0; background: var(--paper); }
+    /* ── Reset ─────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { -webkit-text-size-adjust: 100%; }
     body {
-      color: var(--ink);
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      height: 100dvh;
+      overflow: hidden;
       -webkit-font-smoothing: antialiased;
       -webkit-tap-highlight-color: transparent;
       touch-action: manipulation;
-    }
-    @supports (min-height: 100dvh) {
-      html, body { min-height: 100dvh; }
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
     }
 
-    .app {
-      min-height: 100dvh;
-      display: grid;
-      grid-template-rows: minmax(0, 1fr) minmax(290px, 42vh);
-      background: var(--paper);
+    /* ── Tokens ─────────────────────────────────────────────────────── */
+    :root {
+      --paper:         #FFFEF9;
+      --ink:           #1A1A1A;
+      --ink-2:         #333333;
+      --ink-label:     #999999;
+      --ink-ph:        #C0C0C0;
+      --gold:          #D4AF37;
+      --action:        #0D0D0D;
+      --orb-fill:      #111111;
+      --card:          #FFFFFF;
+      --skel:          #E8E2D9;
+      --skel-alt:      #EDEAE4;
+      --green:         #10B981;
+      --amber:         #F59E0B;
+      --red:           #EF4444;
+      --last-bg:       #161616;
+      --safe-t: env(safe-area-inset-top,    0px);
+      --safe-r: env(safe-area-inset-right,  0px);
+      --safe-b: env(safe-area-inset-bottom, 0px);
+      --safe-l: env(safe-area-inset-left,   0px);
     }
-    .reading-zone {
-      min-height: 0;
-      padding: var(--safe-top) max(20px, var(--safe-right)) 24px max(20px, var(--safe-left));
+
+    /* ── Icon defs (hidden SVG sprite) ─────────────────────────────── */
+    .icon-defs { display: none; }
+
+    /* ── App shell ──────────────────────────────────────────────────── */
+    .app {
+      height: 100%;
+      height: 100dvh;
       display: flex;
       flex-direction: column;
+      background: var(--action);
     }
+
+    /* ── Reading zone ───────────────────────────────────────────────── */
+    .reading-zone {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--paper);
+      overflow: hidden;
+    }
+
+    /* ── Trust bar ──────────────────────────────────────────────────── */
     .trust-bar {
-      min-height: 40px;
+      flex: 0 0 auto;
       display: flex;
       align-items: center;
-      gap: 9px;
-      padding: 10px 0;
-      color: rgba(255,255,255,.88);
-      background: var(--action);
-      margin: 0 calc(-1 * max(20px, var(--safe-right))) 18px calc(-1 * max(20px, var(--safe-left)));
-      padding-left: max(20px, var(--safe-left));
-      padding-right: max(20px, var(--safe-right));
-      font-size: 11px;
-      font-weight: 650;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-    }
-    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
-    .status-dot[data-state="ready"], .status-dot[data-state="listening"], .status-dot[data-state="speaking"] { background: var(--green); }
-    .status-dot[data-state="connecting"], .status-dot[data-state="processing"] { background: var(--amber); }
-    .status-dot[data-state="offline"], .status-dot[data-state="error"] { background: var(--red); }
-    .status-copy { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .direction { margin-left: auto; color: rgba(255,255,255,.48); font-size: 10px; }
-
-    .header { width: min(100%, 920px); margin: 0 auto; }
-    .wordmark { margin: 0; font-size: clamp(34px, 7vw, 52px); line-height: 1; letter-spacing: .22em; font-weight: 800; }
-    .subtitle { margin: 7px 0 19px; color: var(--gold); font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-    .rule { height: 1px; background: var(--gold); }
-    .panel {
-      width: min(100%, 920px);
-      margin: 18px auto 0;
-      min-height: 0;
-      flex: 1;
-      display: grid;
-      align-content: start;
-      gap: 18px;
-      overflow-y: auto;
+      gap: 8px;
+      padding-top: calc(var(--safe-t) + 10px);
       padding-bottom: 10px;
+      padding-left: max(20px, var(--safe-l));
+      padding-right: max(20px, var(--safe-r));
+      background: #000;
     }
-    .turn { display: grid; gap: 6px; }
-    .label { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-    .text { margin: 0; font-size: clamp(20px, 3.2vw, 30px); line-height: 1.28; overflow-wrap: anywhere; }
-    .translation { color: #0A0A0A; font-weight: 600; }
-    .placeholder { color: var(--muted); font-weight: 400; }
-    .error { min-height: 18px; color: #B91C1C; font-size: 13px; line-height: 1.35; }
 
-    .action-zone {
-      min-height: 0;
-      display: grid;
-      place-items: center;
-      align-content: center;
-      gap: 15px;
-      padding: 24px max(20px, var(--safe-right)) max(24px, var(--safe-bottom)) max(20px, var(--safe-left));
-      background: var(--action);
-      border-top: 1px solid var(--gold);
-      color: white;
-    }
-    .orb {
-      width: clamp(148px, 21vw, 184px);
-      aspect-ratio: 1;
-      border: 2px solid var(--gold);
+    .conn-dot {
+      width: 7px; height: 7px;
       border-radius: 50%;
-      background: transparent;
-      color: white;
-      display: grid;
-      place-items: center;
-      padding: 20px;
-      font: inherit;
-      font-size: 12px;
-      font-weight: 750;
-      letter-spacing: .14em;
+      flex: 0 0 auto;
+      background: var(--green);
+      transition: background-color 0.3s ease;
+    }
+    .conn-dot[data-conn="reconnecting"] { background: var(--amber); }
+    .conn-dot[data-conn="offline"]      { background: var(--red); }
+
+    @keyframes dotPulse {
+      0%, 100% { transform: scale(0.7); opacity: 0.45; }
+      50%       { transform: scale(1.3); opacity: 1.0;  }
+    }
+    .conn-dot.is-active { animation: dotPulse 1.3s ease-in-out infinite; }
+
+    .state-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
+      color: rgba(255,255,255,0.85);
+      white-space: nowrap;
+    }
+
+    .dir-label {
+      margin-left: auto;
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      color: rgba(255,255,255,0.35);
+      white-space: nowrap;
+      transition: color 0.2s ease;
+    }
+    .dir-label.is-reconnecting { color: rgba(245,158,11,0.85); }
+    .dir-label.is-offline      { color: rgba(239,68,68,0.85);  }
+
+    /* ── Header ─────────────────────────────────────────────────────── */
+    .header {
+      flex: 0 0 auto;
+      padding: 18px 22px 0;
+    }
+
+    .wordmark {
+      font-size: 44px;
+      font-weight: 800;
+      letter-spacing: 0.27em;
+      color: var(--ink);
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+
+    .subtitle {
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.11em;
+      color: var(--gold);
+      margin-bottom: 14px;
+    }
+
+    .convo-label {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.27em;
+      color: rgba(26,26,26,0.22);
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .gold-rule {
+      height: 1px;
+      background: var(--gold);
+    }
+
+    /* ── Panel ──────────────────────────────────────────────────────── */
+    .panel {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 0;
+    }
+
+    /* ── Empty state ─────────────────────────────────────────────────── */
+    .empty-state {
+      padding: 44px 16px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .skel-card {
+      background: rgba(255,255,255,0.7);
+      border: 1px solid #E4DDD4;
+      border-radius: 10px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .skel-row {
+      border-radius: 2px;
+      background: var(--skel);
+      height: 10px;
+    }
+    .skel-row.skel-lbl  { width: 28px; height: 7px; }
+    .skel-row.skel-wide { width: 60%; }
+    .skel-row.skel-mid  { width: 50%; }
+    .skel-row.skel-alt  { background: var(--skel-alt); height: 9px; }
+    .skel-sep { width: 28px; height: 1.5px; background: rgba(212,175,55,0.25); margin: 2px 0; }
+
+    .empty-hint {
+      font-size: 11px;
+      font-weight: 400;
+      letter-spacing: 0.02em;
+      color: var(--ink-ph);
+      text-align: center;
+      padding: 6px 0 16px;
+    }
+
+    /* ── Turn cards ─────────────────────────────────────────────────── */
+    .turns-list {
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .turn-card {
+      background: var(--card);
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04);
+    }
+    .turn-card.is-older {
+      box-shadow: 0 1px 3px rgba(0,0,0,0.025);
+    }
+
+    .turn-lang {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--ink-label);
+      margin-bottom: 4px;
+    }
+
+    .turn-source {
+      font-size: 17px;
+      font-weight: 600;
+      color: var(--ink);
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    .turn-divider {
+      width: 36px;
+      height: 1.5px;
+      background: var(--gold);
+      margin: 7px 0 9px;
+    }
+
+    .turn-target {
+      font-size: 16px;
+      font-weight: 400;
+      color: var(--ink-2);
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    /* ── Zone separator ─────────────────────────────────────────────── */
+    .zone-sep {
+      flex: 0 0 1px;
+      background: var(--gold);
+    }
+
+    /* ── Action zone ─────────────────────────────────────────────────── */
+    .action-zone {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: var(--action);
+      padding-bottom: max(20px, var(--safe-b));
+    }
+
+    /* ── Direction over orb ─────────────────────────────────────────── */
+    .dir-over-orb {
+      height: 14px;
+      margin-top: 20px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--gold);
+      opacity: 0;
+      transition: opacity 0.18s ease;
+      pointer-events: none;
+      user-select: none;
+    }
+    .dir-over-orb.is-visible { opacity: 1; }
+
+    /* ── Orb button ─────────────────────────────────────────────────── */
+    .orb-btn {
+      background: none;
+      border: none;
+      padding: 0;
       cursor: pointer;
+      touch-action: none;
       user-select: none;
       -webkit-user-select: none;
-      transition: transform .16s ease, background .16s ease, border-color .16s ease;
+      display: block;
+      margin-top: 14px;
+      -webkit-tap-highlight-color: transparent;
+      outline: none;
     }
-    .orb:active, .orb[data-state="listening"] { transform: scale(.94); background: rgba(212,175,55,.14); }
-    .orb[data-state="connecting"], .orb[data-state="processing"] { border-color: var(--amber); color: #FFE9A9; }
-    .orb[data-state="speaking"] { border-color: var(--green); color: #B7F7DD; }
-    .orb[data-state="offline"], .orb[data-state="error"] { border-color: var(--red); color: #FFC5C5; }
-    .action-status { color: rgba(255,255,255,.62); font-size: 12px; letter-spacing: .04em; text-align: center; }
-    .reconnect {
-      color: #FFE9A9;
-      background: transparent;
-      border: 0;
-      padding: 8px;
+    .orb-btn:focus-visible .orb-fill {
+      outline: 3px solid rgba(255,255,255,0.7);
+      outline-offset: 6px;
+    }
+
+    /* Press wrapper — handles physical press-down scale */
+    .orb-press {
+      will-change: transform;
+      transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .orb-press.is-pressed {
+      transform: scale(0.94);
+      transition: transform 0.12s ease-out;
+    }
+
+    /* Animation wrapper — handles breathing/state animations */
+    .orb-anim {
+      position: relative;
+      width: 134px;
+      height: 134px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      will-change: transform;
+    }
+
+    @keyframes orbBreath {
+      0%, 100% { transform: scale(1.000); }
+      50%       { transform: scale(1.025); }
+    }
+    @keyframes orbCompress {
+      0%, 100% { transform: scale(0.950); }
+      50%       { transform: scale(0.970); }
+    }
+    @keyframes orbSpeak {
+      0%, 100% { transform: scale(1.000); }
+      50%       { transform: scale(1.060); }
+    }
+    @keyframes orbSpinDash {
+      to { transform: rotate(360deg); }
+    }
+
+    .orb-anim[data-state="ready"]      { animation: orbBreath   5.6s ease-in-out infinite; }
+    .orb-anim[data-state="listening"]  { animation: none; transform: scale(1.08); transition: transform 0.12s ease-out; }
+    .orb-anim[data-state="processing"] { animation: orbCompress 2.4s ease-in-out infinite; }
+    .orb-anim[data-state="speaking"]   { animation: orbSpeak    1.4s ease-in-out infinite; }
+    .orb-anim[data-state="connecting"],
+    .orb-anim[data-state="offline"],
+    .orb-anim[data-state="error"]      { animation: none; }
+
+    /* Glow layer */
+    .orb-glow {
+      position: absolute;
+      width: 134px; height: 134px;
+      border-radius: 50%;
+      background: rgba(212,175,55,0.06);
+      opacity: 0;
+      transition: opacity 0.4s ease;
+      pointer-events: none;
+    }
+    .orb-anim[data-state="ready"] .orb-glow { opacity: 1; }
+
+    /* Ring layer */
+    .orb-ring {
+      position: absolute;
+      width: 118px; height: 118px;
+      border-radius: 50%;
+      border: 2px solid rgba(212,175,55,0.72);
+      display: flex; align-items: center; justify-content: center;
+      transition: border-width 0.25s ease, border-color 0.25s ease;
+      pointer-events: none;
+    }
+    .orb-anim[data-state="listening"] .orb-ring {
+      border-width: 3.5px;
+      border-color: rgba(212,175,55,1.0);
+    }
+    .orb-anim[data-state="processing"] .orb-ring,
+    .orb-anim[data-state="speaking"]   .orb-ring {
+      border-width: 2.5px;
+      border-color: rgba(212,175,55,0.65);
+    }
+    .orb-anim[data-state="connecting"] .orb-ring,
+    .orb-anim[data-state="offline"]    .orb-ring,
+    .orb-anim[data-state="error"]      .orb-ring {
+      border-color: rgba(212,175,55,0.28);
+    }
+
+    /* Spinning dash ring (processing only) */
+    .orb-spin-dash {
+      position: absolute;
+      width: 118px; height: 118px;
+      border-radius: 50%;
+      border: 1.5px dashed rgba(212,175,55,0.55);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      animation: orbSpinDash 3.5s linear infinite;
+      pointer-events: none;
+    }
+    .orb-anim[data-state="processing"] .orb-spin-dash { opacity: 1; }
+
+    /* Fill */
+    .orb-fill {
+      position: absolute;
+      width: 104px; height: 104px;
+      border-radius: 50%;
+      background: var(--orb-fill);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Inner highlight ring */
+    .orb-inner-ring {
+      position: absolute;
+      width: 102px; height: 102px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.04);
+      pointer-events: none;
+    }
+
+    /* SVG icon */
+    .orb-icon {
+      width: 30px; height: 30px;
+      color: rgba(255,255,255,0.75);
+      transition: color 0.2s ease;
+      position: relative;
+      z-index: 1;
+      display: block;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .orb-anim[data-state="listening"]  .orb-icon { color: #ffffff; }
+    .orb-anim[data-state="processing"] .orb-icon,
+    .orb-anim[data-state="speaking"]   .orb-icon { color: var(--gold); }
+
+    /* ── Orb label ───────────────────────────────────────────────────── */
+    .orb-label {
+      margin-top: 16px;
+      min-height: 14px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.45);
+      text-align: center;
+      transition: color 0.15s ease, font-size 0.15s ease, letter-spacing 0.15s ease;
+      padding: 0 24px;
+      max-width: 320px;
+    }
+    .orb-label.is-transcript {
+      font-size: 14px;
+      font-weight: 400;
+      letter-spacing: 0;
+      text-transform: none;
+      color: rgba(255,255,255,0.85);
+      line-height: 1.3;
+    }
+
+    /* ── Last turn actions ───────────────────────────────────────────── */
+    .last-actions {
+      width: 100%;
+      padding: 12px max(20px, var(--safe-r)) 0 max(20px, var(--safe-l));
+      background: var(--last-bg);
+      border-top: 1px solid rgba(212,175,55,0.18);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      margin-top: 12px;
+    }
+    .last-actions[hidden] { display: none; }
+
+    .last-src {
+      font-size: 12px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.70);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.4;
+    }
+
+    .last-tgt {
+      font-size: 12px;
+      font-weight: 400;
+      color: rgba(255,255,255,0.42);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.4;
+    }
+
+    .last-btns {
+      display: flex;
+      gap: 16px;
+      margin-top: 6px;
+      padding-bottom: 4px;
+    }
+
+    .act-btn {
+      background: none;
+      border: none;
+      padding: 6px 0;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      color: var(--gold);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      -webkit-tap-highlight-color: transparent;
+      transition: color 0.15s ease;
+    }
+    .act-btn.is-copied { color: rgba(255,255,255,0.55); }
+    .act-btn svg {
+      flex: 0 0 auto;
+      display: block;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* ── Gold decorative line ────────────────────────────────────────── */
+    .gold-thin-line {
+      width: 32px;
+      height: 1px;
+      background: rgba(212,175,55,0.45);
+      margin-top: 16px;
+    }
+
+    /* ── Error + Reconnect ──────────────────────────────────────────── */
+    .error-text {
+      font-size: 13px;
+      line-height: 1.35;
+      color: #B91C1C;
+      text-align: center;
+      padding: 0 24px;
+      min-height: 0;
+      display: none;
+    }
+    .error-text:not(:empty) {
+      display: block;
+      margin-top: 10px;
+    }
+
+    .reconnect-btn {
+      background: none;
+      border: none;
+      padding: 8px 24px;
       font: inherit;
       font-size: 12px;
+      font-weight: 500;
+      color: rgba(255,233,154,1);
       text-decoration: underline;
       cursor: pointer;
+      margin-top: 4px;
+      -webkit-tap-highlight-color: transparent;
     }
-    .reconnect[hidden] { display: none; }
-    :focus-visible { outline: 3px solid white; outline-offset: 4px; }
 
+    /* ── Landscape ───────────────────────────────────────────────────── */
     @media (orientation: landscape) and (min-width: 700px) {
-      .app { grid-template-columns: minmax(0, 1.25fr) minmax(340px, .75fr); grid-template-rows: minmax(0, 1fr); }
-      .reading-zone { padding-bottom: max(20px, var(--safe-bottom)); }
-      .action-zone { border-top: 0; border-left: 1px solid var(--gold); }
+      .app {
+        flex-direction: row;
+      }
+      .reading-zone {
+        flex: 1.25;
+        padding-left: max(0px, var(--safe-l));
+      }
+      .zone-sep {
+        width: 1px;
+        height: 100%;
+        flex: 0 0 1px;
+        align-self: stretch;
+      }
+      .action-zone {
+        flex: 0 0 min(360px, 42vw);
+        height: 100%;
+        justify-content: center;
+        overflow-y: auto;
+        padding-right: max(20px, var(--safe-r));
+      }
+      .last-actions {
+        margin-top: 10px;
+      }
     }
-    @media (max-width: 420px) {
-      .reading-zone { padding-left: max(16px, var(--safe-left)); padding-right: max(16px, var(--safe-right)); }
-      .trust-bar { margin-left: calc(-1 * max(16px, var(--safe-left))); margin-right: calc(-1 * max(16px, var(--safe-right))); padding-left: max(16px, var(--safe-left)); padding-right: max(16px, var(--safe-right)); }
-      .text { font-size: 20px; }
+
+    /* ── Small phones ────────────────────────────────────────────────── */
+    @media (max-width: 390px) {
+      .wordmark { font-size: 36px; letter-spacing: 0.22em; }
+      .trust-bar {
+        padding-left: max(16px, var(--safe-l));
+        padding-right: max(16px, var(--safe-r));
+      }
+      .header { padding-left: 16px; padding-right: 16px; }
     }
-    @media (prefers-reduced-motion: reduce) { .orb { transition: none; } }
+
+    /* hidden attribute must win over display:flex declarations */
+    [hidden] { display: none !important; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .orb-anim,
+      .orb-spin-dash,
+      .conn-dot { animation: none !important; transition: none !important; }
+      .orb-anim[data-state="listening"] { transition: none !important; }
+    }
   </style>
 </head>
 <body>
+
+  <!-- SVG sprite ─────────────────────────────────────────────────────── -->
+  <svg class="icon-defs" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <!-- Mic (ready / listening) -->
+      <symbol id="ico-mic" viewBox="0 0 24 24">
+        <rect x="9" y="1" width="6" height="12" rx="3"/>
+        <path d="M19 10a7 7 0 0 1-14 0M12 19v4M8 23h8"/>
+      </symbol>
+      <!-- Waveform (processing) -->
+      <symbol id="ico-wave" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+        <rect x="2"  y="9"  width="2.5" height="6"  rx="1.25"/>
+        <rect x="6"  y="5"  width="2.5" height="14" rx="1.25"/>
+        <rect x="10" y="2"  width="2.5" height="20" rx="1.25"/>
+        <rect x="14" y="5"  width="2.5" height="14" rx="1.25"/>
+        <rect x="18" y="9"  width="2.5" height="6"  rx="1.25"/>
+      </symbol>
+      <!-- Speaker (speaking) -->
+      <symbol id="ico-speaker" viewBox="0 0 24 24">
+        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"/>
+        <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+        <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+      </symbol>
+      <!-- Copy (last actions) -->
+      <symbol id="ico-copy" viewBox="0 0 16 16">
+        <rect x="5" y="5" width="9" height="9" rx="1.5"/>
+        <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/>
+      </symbol>
+      <!-- Checkmark (copied state) -->
+      <symbol id="ico-check" viewBox="0 0 16 16">
+        <polyline points="2 8 6 12 14 4"/>
+      </symbol>
+      <!-- Share (last actions) -->
+      <symbol id="ico-share" viewBox="0 0 16 16">
+        <path d="M8 1v9M5 4l3-3 3 3"/>
+        <path d="M3 10v4h10v-4"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <!-- App ─────────────────────────────────────────────────────────────── -->
   <div class="app">
-    <main class="reading-zone">
-      <div class="trust-bar" aria-live="polite">
-        <span class="status-dot" id="statusDot" data-state="ready"></span>
-        <span class="status-copy" id="statusCopy">Ready</span>
-        <span class="direction" id="direction">EN <span aria-hidden="true">/</span> PT-BR</span>
+
+    <!-- ── READING ZONE ──────────────────────────────────────────────── -->
+    <div class="reading-zone">
+
+      <!-- Trust bar -->
+      <div class="trust-bar">
+        <span class="conn-dot" id="connDot"></span>
+        <span class="state-label" id="stateLabel">Ready</span>
+        <span class="dir-label" id="dirLabel">EN  ·  PT-BR</span>
       </div>
+
+      <!-- Header -->
       <header class="header">
         <h1 class="wordmark">FLOW</h1>
-        <p class="subtitle">Live interpreter</p>
-        <div class="rule"></div>
+        <p class="subtitle">Diaspora Interpreter</p>
+        <p class="convo-label">Conversation</p>
+        <div class="gold-rule"></div>
       </header>
-      <section class="panel" aria-live="polite">
-        <div class="turn">
-          <div class="label" id="sourceLabel">Source</div>
-          <p class="text placeholder" id="sourceText">Hold the orb to speak.</p>
+
+      <!-- Panel — turn cards or skeleton -->
+      <div class="panel" id="panel">
+        <div class="empty-state" id="emptyState">
+          <div class="skel-card">
+            <div class="skel-row skel-lbl"></div>
+            <div class="skel-row"></div>
+            <div class="skel-row skel-wide"></div>
+            <div class="skel-sep"></div>
+            <div class="skel-row skel-alt"></div>
+            <div class="skel-row skel-mid skel-alt"></div>
+          </div>
+          <div class="skel-card">
+            <div class="skel-row skel-lbl"></div>
+            <div class="skel-row"></div>
+            <div class="skel-sep"></div>
+            <div class="skel-row skel-alt"></div>
+            <div class="skel-row skel-alt"></div>
+          </div>
+          <p class="empty-hint">Your conversation appears here</p>
         </div>
-        <div class="turn">
-          <div class="label" id="translationLabel">Translation</div>
-          <p class="text translation placeholder" id="translationText">Your final translation appears here.</p>
+        <!-- turn cards injected here by app.js -->
+        <div class="turns-list" id="turnsList"></div>
+      </div>
+    </div>
+
+    <!-- ── ZONE SEPARATOR ────────────────────────────────────────────── -->
+    <div class="zone-sep" role="separator" aria-hidden="true"></div>
+
+    <!-- ── ACTION ZONE ───────────────────────────────────────────────── -->
+    <div class="action-zone">
+
+      <!-- Direction over orb -->
+      <p class="dir-over-orb" id="dirOverOrb" aria-hidden="true">INTERPRETING…</p>
+
+      <!-- Orb -->
+      <button class="orb-btn" id="orbBtn" type="button"
+              aria-label="Hold to speak" aria-pressed="false">
+        <div class="orb-press" id="orbPress">
+          <div class="orb-anim" id="orbWrap" data-state="ready">
+            <div class="orb-glow"></div>
+            <div class="orb-ring">
+              <div class="orb-spin-dash"></div>
+            </div>
+            <div class="orb-fill">
+              <div class="orb-inner-ring"></div>
+              <svg class="orb-icon" id="orbIcon" aria-hidden="true">
+                <use id="orbIconUse" href="#ico-mic"/>
+              </svg>
+            </div>
+          </div>
         </div>
-        <div class="error" id="errorText" role="status"></div>
-      </section>
-    </main>
-    <section class="action-zone" aria-label="Speech control">
-      <button class="orb" id="holdButton" type="button" data-state="ready" aria-label="Hold to speak">Hold to speak</button>
-      <div class="action-status" id="actionStatus">Press and hold. Release to translate.</div>
-      <button class="reconnect" id="reconnectButton" type="button" hidden>Reconnect</button>
-    </section>
+      </button>
+
+      <!-- Label below orb -->
+      <p class="orb-label" id="orbLabel">HOLD TO SPEAK</p>
+
+      <!-- Last turn actions — revealed after first completed turn -->
+      <div class="last-actions" id="lastActions" hidden>
+        <p class="last-src" id="lastSrc"></p>
+        <p class="last-tgt" id="lastTgt"></p>
+        <div class="last-btns">
+          <button class="act-btn" id="copyBtn" type="button">
+            <svg width="11" height="11"><use id="copyIcon" href="#ico-copy"/></svg>
+            <span id="copyLabel">Copy</span>
+          </button>
+          <button class="act-btn" id="shareBtn" type="button">
+            <svg width="11" height="11"><use href="#ico-share"/></svg>
+            Share
+          </button>
+        </div>
+      </div>
+
+      <!-- Decorative gold line -->
+      <div class="gold-thin-line"></div>
+
+      <!-- Error and reconnect -->
+      <div class="error-text" id="errorText" role="status"></div>
+      <button class="reconnect-btn" id="reconnectButton" type="button" hidden>Reconnect</button>
+
+    </div>
   </div>
+
   <script src="app.js"></script>
 </body>
 </html>
