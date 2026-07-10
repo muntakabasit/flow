@@ -312,17 +312,20 @@
       outline-offset: 6px;
     }
 
-    /* Press wrapper — handles physical press-down scale */
+    /* Press wrapper — handles physical press-down scale.
+       pointer-events:none so the GPU-composited layer never intercepts
+       touch events before they reach the parent <button>. */
     .orb-press {
       will-change: transform;
       transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+      pointer-events: none;
     }
     .orb-press.is-pressed {
       transform: scale(0.94);
       transition: transform 0.12s ease-out;
     }
 
-    /* Animation wrapper — handles breathing/state animations */
+    /* Animation wrapper — same compositing caveat; button handles events. */
     .orb-anim {
       position: relative;
       width: 134px;
@@ -331,6 +334,7 @@
       align-items: center;
       justify-content: center;
       will-change: transform;
+      pointer-events: none;
     }
 
     @keyframes orbBreath {
