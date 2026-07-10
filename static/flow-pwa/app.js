@@ -226,6 +226,36 @@ function getAudioContext() {
   return audioContext;
 }
 
+// ── Interaction sounds ────────────────────────────────────────────────────────
+// Subtle programmatic tones — no audio files required.
+// All at low gain (0.06) so they sit well below speech volume.
+
+function _playTone({ freq = 440, endFreq, duration = 0.10, gain = 0.06, type = 'sine', fadeOut = true } = {}) {
+  try {
+    const ctx = getAudioContext();
+    const osc = ctx.createOscillator();
+    const env = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    if (endFreq !== undefined) {
+      osc.frequency.exponentialRampToValueAtTime(endFreq, ctx.currentTime + duration);
+    }
+    env.gain.setValueAtTime(gain, ctx.currentTime);
+    if (fadeOut) env.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+    osc.connect(env);
+    env.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + duration + 0.01);
+  } catch {}
+}
+
+function soundOrbPress()    { _playTone({ freq: 320, endFreq: 220, duration: 0.08, gain: 0.05 }); }
+function soundOrbRelease()  { _playTone({ freq: 220, endFreq: 440, duration: 0.10, gain: 0.05 }); }
+function soundConnected()   {
+  _playTone({ freq: 528, duration: 0.12, gain: 0.04 });
+  setTimeout(() => _playTone({ freq: 792, duration: 0.10, gain: 0.04 }), 110);
+}
+
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 function connect() {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
@@ -454,6 +484,7 @@ function onOrbStart(event) {
   pendingTarget = { text: '', lang: '' };
 
   // Immediate visual feedback
+  soundOrbPress();
   orbPress.classList.add('is-pressed');
   orbBtn.setAttribute('aria-pressed', 'true');
   showError('');
@@ -483,6 +514,7 @@ function release() {
   gestureSource   = null;
   activePointerId = null;
   ++captureToken;
+  soundOrbRelease();
   orbPress.classList.remove('is-pressed');
   orbBtn.setAttribute('aria-pressed', 'false');
   const hadStreaming = streaming;
@@ -670,6 +702,7 @@ function handleMessage(message) {
 
     case 'flow.ready':
       serverReady = true;
+      soundConnected();
       setState('ready');
       maybeStartStreaming();
       break;

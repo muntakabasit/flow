@@ -2249,10 +2249,26 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/")
 async def index():
+    # Serves the canonical Flow PWA. Legacy client archived at /static/index.html.
     return FileResponse(
-        str(STATIC_DIR / "index.html"),
+        str(STATIC_DIR / "flow-pwa" / "index.html"),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
+
+
+@app.get("/favicon.ico")
+async def favicon_ico():
+    return FileResponse(str(STATIC_DIR / "flow-pwa" / "favicon.ico"))
+
+
+@app.get("/apple-touch-icon.png")
+async def apple_touch_icon():
+    return FileResponse(str(STATIC_DIR / "flow-pwa" / "apple-touch-icon.png"))
+
+
+@app.get("/apple-touch-icon-precomposed.png")
+async def apple_touch_icon_precomposed():
+    return FileResponse(str(STATIC_DIR / "flow-pwa" / "apple-touch-icon.png"))
 
 
 @app.get("/health")
