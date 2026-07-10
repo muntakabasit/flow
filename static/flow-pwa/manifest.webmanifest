@@ -1,0 +1,27 @@
+{
+  "name": "Flow",
+  "short_name": "Flow",
+  "description": "Live English and Brazilian Portuguese interpreter.",
+  "id": "/static/flow-pwa/index.html",
+  "start_url": "/static/flow-pwa/index.html",
+  "scope": "/static/flow-pwa/",
+  "display": "standalone",
+  "background_color": "#FFFEF9",
+  "theme_color": "#0D0D0D",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["utilities", "productivity"],
+  "lang": "en"
+}

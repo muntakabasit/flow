@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0D0D0D">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Flow">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="apple-touch-startup-image" href="splash-iphone-1290x2796.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="splash-iphone-2796x1290.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="splash-ipad-2048x2732.png" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="splash-ipad-2732x2048.png" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <title>Flow</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #FFFEF9;
+      --ink: #1A1A1A;
+      --muted: #676767;
+      --line: #DDD8CC;
+      --gold: #D4AF37;
+      --action: #0D0D0D;
+      --green: #10B981;
+      --amber: #F59E0B;
+      --red: #EF4444;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-right: env(safe-area-inset-right, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-left: env(safe-area-inset-left, 0px);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; background: var(--paper); }
+    body {
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    @supports (min-height: 100dvh) {
+      html, body { min-height: 100dvh; }
+    }
+
+    .app {
+      min-height: 100dvh;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) minmax(290px, 42vh);
+      background: var(--paper);
+    }
+    .reading-zone {
+      min-height: 0;
+      padding: var(--safe-top) max(20px, var(--safe-right)) 24px max(20px, var(--safe-left));
+      display: flex;
+      flex-direction: column;
+    }
+    .trust-bar {
+      min-height: 40px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 10px 0;
+      color: rgba(255,255,255,.88);
+      background: var(--action);
+      margin: 0 calc(-1 * max(20px, var(--safe-right))) 18px calc(-1 * max(20px, var(--safe-left)));
+      padding-left: max(20px, var(--safe-left));
+      padding-right: max(20px, var(--safe-right));
+      font-size: 11px;
+      font-weight: 650;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+    .status-dot[data-state="ready"], .status-dot[data-state="listening"], .status-dot[data-state="speaking"] { background: var(--green); }
+    .status-dot[data-state="connecting"], .status-dot[data-state="processing"] { background: var(--amber); }
+    .status-dot[data-state="offline"], .status-dot[data-state="error"] { background: var(--red); }
+    .status-copy { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .direction { margin-left: auto; color: rgba(255,255,255,.48); font-size: 10px; }
+
+    .header { width: min(100%, 920px); margin: 0 auto; }
+    .wordmark { margin: 0; font-size: clamp(34px, 7vw, 52px); line-height: 1; letter-spacing: .22em; font-weight: 800; }
+    .subtitle { margin: 7px 0 19px; color: var(--gold); font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    .rule { height: 1px; background: var(--gold); }
+    .panel {
+      width: min(100%, 920px);
+      margin: 18px auto 0;
+      min-height: 0;
+      flex: 1;
+      display: grid;
+      align-content: start;
+      gap: 18px;
+      overflow-y: auto;
+      padding-bottom: 10px;
+    }
+    .turn { display: grid; gap: 6px; }
+    .label { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    .text { margin: 0; font-size: clamp(20px, 3.2vw, 30px); line-height: 1.28; overflow-wrap: anywhere; }
+    .translation { color: #0A0A0A; font-weight: 600; }
+    .placeholder { color: var(--muted); font-weight: 400; }
+    .error { min-height: 18px; color: #B91C1C; font-size: 13px; line-height: 1.35; }
+
+    .action-zone {
+      min-height: 0;
+      display: grid;
+      place-items: center;
+      align-content: center;
+      gap: 15px;
+      padding: 24px max(20px, var(--safe-right)) max(24px, var(--safe-bottom)) max(20px, var(--safe-left));
+      background: var(--action);
+      border-top: 1px solid var(--gold);
+      color: white;
+    }
+    .orb {
+      width: clamp(148px, 21vw, 184px);
+      aspect-ratio: 1;
+      border: 2px solid var(--gold);
+      border-radius: 50%;
+      background: transparent;
+      color: white;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      transition: transform .16s ease, background .16s ease, border-color .16s ease;
+    }
+    .orb:active, .orb[data-state="listening"] { transform: scale(.94); background: rgba(212,175,55,.14); }
+    .orb[data-state="connecting"], .orb[data-state="processing"] { border-color: var(--amber); color: #FFE9A9; }
+    .orb[data-state="speaking"] { border-color: var(--green); color: #B7F7DD; }
+    .orb[data-state="offline"], .orb[data-state="error"] { border-color: var(--red); color: #FFC5C5; }
+    .action-status { color: rgba(255,255,255,.62); font-size: 12px; letter-spacing: .04em; text-align: center; }
+    .reconnect {
+      color: #FFE9A9;
+      background: transparent;
+      border: 0;
+      padding: 8px;
+      font: inherit;
+      font-size: 12px;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    .reconnect[hidden] { display: none; }
+    :focus-visible { outline: 3px solid white; outline-offset: 4px; }
+
+    @media (orientation: landscape) and (min-width: 700px) {
+      .app { grid-template-columns: minmax(0, 1.25fr) minmax(340px, .75fr); grid-template-rows: minmax(0, 1fr); }
+      .reading-zone { padding-bottom: max(20px, var(--safe-bottom)); }
+      .action-zone { border-top: 0; border-left: 1px solid var(--gold); }
+    }
+    @media (max-width: 420px) {
+      .reading-zone { padding-left: max(16px, var(--safe-left)); padding-right: max(16px, var(--safe-right)); }
+      .trust-bar { margin-left: calc(-1 * max(16px, var(--safe-left))); margin-right: calc(-1 * max(16px, var(--safe-right))); padding-left: max(16px, var(--safe-left)); padding-right: max(16px, var(--safe-right)); }
+      .text { font-size: 20px; }
+    }
+    @media (prefers-reduced-motion: reduce) { .orb { transition: none; } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <main class="reading-zone">
+      <div class="trust-bar" aria-live="polite">
+        <span class="status-dot" id="statusDot" data-state="ready"></span>
+        <span class="status-copy" id="statusCopy">Ready</span>
+        <span class="direction" id="direction">EN <span aria-hidden="true">/</span> PT-BR</span>
+      </div>
+      <header class="header">
+        <h1 class="wordmark">FLOW</h1>
+        <p class="subtitle">Live interpreter</p>
+        <div class="rule"></div>
+      </header>
+      <section class="panel" aria-live="polite">
+        <div class="turn">
+          <div class="label" id="sourceLabel">Source</div>
+          <p class="text placeholder" id="sourceText">Hold the orb to speak.</p>
+        </div>
+        <div class="turn">
+          <div class="label" id="translationLabel">Translation</div>
+          <p class="text translation placeholder" id="translationText">Your final translation appears here.</p>
+        </div>
+        <div class="error" id="errorText" role="status"></div>
+      </section>
+    </main>
+    <section class="action-zone" aria-label="Speech control">
+      <button class="orb" id="holdButton" type="button" data-state="ready" aria-label="Hold to speak">Hold to speak</button>
+      <div class="action-status" id="actionStatus">Press and hold. Release to translate.</div>
+      <button class="reconnect" id="reconnectButton" type="button" hidden>Reconnect</button>
+    </section>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
