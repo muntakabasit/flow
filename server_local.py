@@ -4,14 +4,13 @@ No cloud calls. Whisper + Ollama + Piper TTS on-device.
 
 Hold-to-talk pipeline (sentence-level TTS overlap):
   Press → audio capture starts → Release → force_finalize → mlx-whisper STT (Apple Silicon ANE)
-    → Ollama LLM streams tokens → detect sentence boundary
-    → Piper TTS per sentence → audio_delta sent immediately
-    (LLM continues generating while TTS plays previous sentence)
+    → Ollama LLM completes translation → direction validation/retry
+    → translation_done + Piper TTS use the same approved final text
   VAD role: speech onset detection + hard-cap safety only (not turn authority)
 
 Key optimizations:
   - Single-pass STT with stable_lang hint (skips 3× dual-transcription)
-  - Streaming LLM → sentence-level TTS (overlaps generation with synthesis)
+  - Deferred TTS after final validated translation
   - Persistent httpx connection pooling for Ollama
   - Barge-in cancels remaining TTS sentences
   - Energy pre-filter + hallucination guard
@@ -30,6 +29,7 @@ import time
 import traceback
 import re
 import errno
+from dataclasses import dataclass
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
@@ -1109,6 +1109,50 @@ def _looks_like_english(text: str) -> bool:
     return bool(words & _EN_DISCRIMINATING_WORDS)
 
 
+def _log_pt_to_en_language_lock_audit(
+    *,
+    turn_id: int,
+    source_transcript: str,
+    translation_input: str,
+    translated_output: str | None,
+    stage: str,
+    source_language_confidence: float | None,
+    rejection_reason: str | None,
+    final_decision: str,
+    error: Exception | None = None,
+) -> bool:
+    """Log PT-to-EN final-lock evidence for the coverage-and-leakage predicate."""
+    evidence = _pt_to_en_language_lock_evidence(translated_output or "")
+    accepted = evidence["accepted"]
+    log("[pt_en_lock_audit] " + json.dumps({
+        "turn_id": turn_id,
+        "stage": stage,
+        "source_transcript": source_transcript,
+        "translation_input": translation_input,
+        "translated_output": translated_output,
+        "validator_input": evidence["validator_input"],
+        "validator": "pt_to_en_english_coverage_with_portuguese_leak_guard",
+        "validator_score": evidence["english_score"],
+        "validator_threshold": evidence["english_threshold"],
+        "validator_marker_hits": evidence["english_marker_hits"],
+        "portuguese_leak_hits": evidence["portuguese_leak_hits"],
+        "portuguese_diacritic_hits": evidence["portuguese_diacritic_hits"],
+        "validator_rejection_reason": evidence["rejection_reason"],
+        "validator_accepted": accepted,
+        "source_language_confidence": source_language_confidence,
+        "target_language_confidence": None,
+        "target_language_confidence_note": (
+            "not_available: lexical evidence validator has no calibrated confidence"
+        ),
+        "detector_disagreement": "not_assessed: no independent target-language detector",
+        "rejection_reason": rejection_reason,
+        "final_decision": final_decision,
+        "error_type": type(error).__name__ if error else None,
+        "error_message": str(error) if error else None,
+    }, ensure_ascii=False, sort_keys=True))
+    return accepted
+
+
 def _text_clearly_english(text: str) -> bool:
     """True if text contains >= 2 unambiguous English words and zero PT-unique markers.
 
@@ -1400,24 +1444,103 @@ def _norm_lang(lang):
 # Portuguese stopwords used for post-LLM output validation.
 # If an EN→PT-BR translation contains none of these, the LLM likely returned
 # English text unchanged — treat as a translation failure.
-_PT_STOPWORDS = frozenset({
-    "de", "que", "e", "o", "a", "do", "da", "em", "um", "uma",
-    "os", "as", "para", "com", "por", "se", "no", "na", "não",
-    "é", "isso", "está", "são", "eu", "você", "nós", "ele", "ela",
-    "mas", "mais", "muito", "bem", "quando", "como", "já",
+# FLOW_EN_TO_PT_LANGUAGE_LOCK_V1: positive-evidence Portuguese detection.
+# The old check auto-passed anything under 4 words and accepted English-collision
+# stopwords ("a", "as", "no", "se", "e", "um" are all valid English words) as
+# Portuguese proof — letting English output through the EN→PT guard.
+_PT_DIACRITICS = set("ãõçáàâéêíóôú")
+
+# Unambiguous PT words only — every token here is NOT a valid English word.
+# Excluded collisions: a, as, no, se, e, um, mais, favor (standalone).
+_PT_UNAMBIGUOUS_WORDS = frozenset({
+    "não", "você", "está", "é", "isso", "já", "muito",
+    "obrigado", "obrigada", "bom", "boa", "hoje", "aqui", "agora", "também",
+    "sim", "tá", "tô", "entendi", "tudo", "certo", "claro",
+    "pode", "posso", "onde", "quando", "como", "para", "com", "que",
+    "ele", "ela", "eu", "nós", "vamos", "fala", "falar", "devagar", "por",
 })
 
-def _looks_like_portuguese(text: str) -> bool:
-    """Return True if text plausibly contains Portuguese.
 
-    Short outputs (< 4 words) are given a pass — single-word translations
-    like "OK" or "Sim" are valid without stopwords.
+def _looks_like_portuguese(text: str) -> bool:
+    """True only with positive Portuguese evidence — any length.
+
+    Evidence = a PT diacritic, the phrase "por favor", or an unambiguous PT word.
+    Always False when the text is clearly English, regardless of other hits.
     """
-    words = [w.strip(".,!?;:\"'").lower() for w in text.split()]
-    if len(words) < 4:
-        return True   # too short to judge — don't false-positive on valid short translations
-    hits = sum(1 for w in words if w in _PT_STOPWORDS)
-    return hits >= 1
+    if not text.strip():
+        return False
+    if _text_clearly_english(text):
+        return False
+    lowered = text.lower()
+    if any(ch in _PT_DIACRITICS for ch in lowered):
+        return True
+    if "por favor" in lowered:
+        return True
+    words = [w.strip(".,!?;:\"'()").lower() for w in text.split()]
+    return any(w in _PT_UNAMBIGUOUS_WORDS for w in words)
+
+
+# PT-to-EN final-lock vocabulary is intentionally separate from the generic
+# STT language hints and the EN-to-PT validator. One positive English signal
+# still passes only when there is no positive Portuguese leakage evidence.
+_PT_TO_EN_ENGLISH_EVIDENCE_WORDS = _EN_DISCRIMINATING_WORDS | frozenset({
+    "again", "answer", "ask", "bring", "call", "come", "continue", "eat",
+    "explain", "feel", "find", "food", "get", "give", "go", "hear", "help",
+    "hold", "know", "learn", "listen", "look", "make", "mean", "need", "now",
+    "repeat", "say", "see", "something", "speak", "stop", "tell", "think",
+    "understand", "wait", "want", "water", "work", "yes",
+})
+
+# Strong Portuguese-only evidence for PT-to-EN leakage rejection. This set is
+# not shared with EN-to-PT validation, so this repair cannot change that path.
+_PT_TO_EN_PORTUGUESE_LEAK_WORDS = frozenset({
+    "agora", "ajuda", "alguma", "aqui", "bem", "boa", "bom", "com", "comer",
+    "como", "coisa", "claro", "comigo", "conseguir", "de", "depois", "dizer",
+    "ela", "ele", "encontrar", "entender", "entendi", "então", "entao", "espera",
+    "está", "esta", "eu", "explica", "falar", "fazer", "gosto", "hoje", "já",
+    "ja", "lá", "la", "melhor", "muito", "não", "nao", "onde", "ouvir", "para",
+    "pera", "peraí", "por", "posso", "pode", "preciso", "quero", "repete", "sei",
+    "sim", "também", "tambem", "tá", "ta", "tô", "tudo", "vai", "vamos",
+    "você", "voce",
+})
+
+
+def _pt_to_en_language_lock_evidence(text: str) -> dict:
+    """Return PT-to-EN lock evidence without changing any other language path."""
+    validator_input = (text or "").strip()
+    tokens = set(re.sub(r"[^\w'\s]", "", validator_input.lower()).split())
+    english_hits = sorted(tokens & _PT_TO_EN_ENGLISH_EVIDENCE_WORDS)
+    portuguese_hits = sorted(tokens & _PT_TO_EN_PORTUGUESE_LEAK_WORDS)
+    portuguese_diacritics = sorted({
+        char for char in validator_input.lower() if char in _PT_DIACRITICS
+    })
+
+    if not validator_input:
+        rejection_reason = "empty_output"
+    elif portuguese_diacritics:
+        rejection_reason = "portuguese_diacritic_leakage"
+    elif portuguese_hits:
+        rejection_reason = "portuguese_lexical_leakage"
+    elif not english_hits:
+        rejection_reason = "no_english_evidence_words"
+    else:
+        rejection_reason = None
+
+    return {
+        "accepted": rejection_reason is None,
+        "validator_input": validator_input,
+        "english_marker_hits": english_hits,
+        "english_score": len(english_hits),
+        "english_threshold": 1,
+        "portuguese_leak_hits": portuguese_hits,
+        "portuguese_diacritic_hits": portuguese_diacritics,
+        "rejection_reason": rejection_reason,
+    }
+
+
+def _looks_like_english_translation(text: str) -> bool:
+    """PT-to-EN final-lock predicate with explicit Portuguese leakage rejection."""
+    return _pt_to_en_language_lock_evidence(text)["accepted"]
 
 
 # ---------------------------------------------------------------------------
@@ -1780,9 +1903,14 @@ async def safe_send(ws, payload: dict) -> bool:
         return False
 
 
-async def synthesize_and_send(text, target_lang, client_ws):
-    """Synthesize and stream audio chunks to browser."""
+async def synthesize_and_send(text, target_lang, client_ws, barge_in_event: asyncio.Event | None = None):
+    """Synthesize one approved text payload and stream audio chunks to browser."""
     loop = asyncio.get_event_loop()
+    request_id = str(time.monotonic_ns())
+    started_at = time.monotonic()
+    first_audio_ms = 0.0
+    chunks_sent = 0
+    log(f"[tts_boundary] request_id={request_id} lang={target_lang} text='{text.strip()[:120]}'")
 
     try:
         # Run TTS in thread pool to avoid blocking
@@ -1796,24 +1924,38 @@ async def synthesize_and_send(text, target_lang, client_ws):
         if audio is None or len(audio) == 0:
             log("[flow-local] ❌ TTS returned empty audio")
             await safe_send(client_ws, {"type": "error", "code": "TTS_FAILED", "message": "Could not generate audio response"})
-            return
+            return 0.0, (time.monotonic() - started_at) * 1000, 0
+
+        if not await safe_send(client_ws, {"type": "tts_start"}):
+            return 0.0, (time.monotonic() - started_at) * 1000, 0
+        if _lease is not None:
+            _lease.is_speaking = True
+            _lease.touch()
 
         # Chunk into ~2048 samples (~85ms at 24kHz) and send - reduced for lower perceived latency
         chunk_size = 2048
         for i in range(0, len(audio), chunk_size):
+            if barge_in_event is not None and barge_in_event.is_set():
+                break
             chunk = audio[i : i + chunk_size]
             b64 = float32_to_pcm16_b64(chunk)
             if not await safe_send(client_ws, {"type": "audio_delta", "audio": b64}):
-                return  # client gone — stop sending
+                return first_audio_ms, (time.monotonic() - started_at) * 1000, chunks_sent
+            if chunks_sent == 0:
+                first_audio_ms = (time.monotonic() - started_at) * 1000
+                log(f"[tts_boundary] request_id={request_id} first_audio_ms={first_audio_ms:.0f}")
+            chunks_sent += 1
+        return first_audio_ms, (time.monotonic() - started_at) * 1000, chunks_sent
     except Exception as e:
         log(f"[flow-local] ❌ TTS EXCEPTION: {type(e).__name__}: {e}")
         import traceback
         log(f"[flow-local] TTS Traceback:\n{traceback.format_exc()}")
         await safe_send(client_ws, {"type": "error", "code": "TTS_FAILED", "message": "Could not generate audio response"})
+        return 0.0, (time.monotonic() - started_at) * 1000, 0
 
 
 # ---------------------------------------------------------------------------
-# Streaming pipeline: LLM translation → sentence-level TTS → audio chunks
+# Translation pipeline: LLM translation → validation → final approved TTS payload
 # ---------------------------------------------------------------------------
 
 async def translate_and_stream_tts(
@@ -1826,12 +1968,14 @@ async def translate_and_stream_tts(
     barge_in_event: asyncio.Event,
     conv_ctx: "ConversationContext | None" = None,
     extra_instruction: str = "",             # injected on no-op retry; empty = normal call
-) -> tuple[str, str, float, float, float]:
+    source_transcript: str | None = None,
+    source_stt_confidence: float | None = None,
+) -> tuple[str | None, str, float, float, float, float]:
     """
-    Streaming pipeline: LLM translation → sentence-level TTS → audio chunks.
+    Translation pipeline: LLM translation → direction validation → final text.
 
-    As the LLM generates tokens, we detect sentence boundaries and immediately
-    synthesize + send each sentence. This overlaps LLM generation with TTS.
+    TTS is intentionally deferred until after final validation/retry so speech
+    can only use the same approved payload shown in translation_done.
 
     conv_ctx: optional ConversationContext — if present and has a last_clean_meaning,
     its anchor_line() is appended to the system prompt to enable pronoun/topic
@@ -1842,6 +1986,7 @@ async def translate_and_stream_tts(
     """
     # INTENT CLEAN — choke-point: every translation path passes through here.
     # Runs before direction choice, prompt build, or any streaming logic.
+    audit_source_transcript = source_transcript if source_transcript is not None else text
     _intent_cleaned = _clean_intent_text(text, source_language)
     if _intent_cleaned != text:
         log(f"[intent_clean] raw='{text}' → cleaned='{_intent_cleaned}'")
@@ -1851,10 +1996,9 @@ async def translate_and_stream_tts(
         source_language, target_lang_override
     )
 
-    log(f"[flow-local] Streaming pipeline: source={source_norm} target={target_lang} hint={direction_hint} no_op={no_op}")
+    log(f"[flow-local] Translation pipeline: source={source_norm} target={target_lang} hint={direction_hint} no_op={no_op}")
 
     if no_op:
-        await safe_send(client_ws, {"type": "translation_done", "text": text})
         return text, target_lang, 0.0, 0.0, 0.0, 0.0
 
     # Semantic cleanup: strip fillers, collapse repeats before sending to LLM.
@@ -1870,83 +2014,8 @@ async def translate_and_stream_tts(
     llm_start = time.monotonic()
     llm_ttft_ms: float = 0.0          # time-to-first-token: llm_start → first delta
     llm_ttft_logged = False
-    tts_first_audio_time = None
-    tts_total_start = None
     full_text = ""
     pending_sentence = ""
-    sentence_queue: asyncio.Queue = asyncio.Queue()
-    tts_started = False
-    sentences_sent = 0
-
-    # Background task: consume sentence_queue, synthesize, send audio
-    async def tts_consumer():
-        nonlocal tts_first_audio_time, tts_total_start, tts_started, sentences_sent
-        while True:
-            item = await sentence_queue.get()
-            if item is None:  # sentinel: LLM done
-                break
-
-            sentence_text, sentence_idx = item
-            if not sentence_text.strip():
-                continue
-
-            # Check barge-in before each sentence
-            if barge_in_event.is_set():
-                log(f"[flow-local] Barge-in: skipping remaining TTS sentences")
-                # Drain remaining queue
-                while not sentence_queue.empty():
-                    try:
-                        sentence_queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                break
-
-            if tts_total_start is None:
-                tts_total_start = time.monotonic()
-
-            # Synthesize in thread pool
-            t_synth = time.monotonic()
-            try:
-                audio = await loop.run_in_executor(
-                    EXECUTOR, synthesize_audio, sentence_text, target_lang,
-                )
-                if sentence_idx == 0:
-                    log(f"[flow-local] ⏱ tts_synth[0]={(time.monotonic()-t_synth)*1000:.0f}ms  text='{sentence_text[:40]}'")
-            except Exception as e:
-                log(f"[flow-local] TTS sentence {sentence_idx} error: {e}")
-                continue
-
-            if audio is None or len(audio) == 0:
-                log(f"[flow-local] TTS sentence {sentence_idx} empty, skipping")
-                continue
-
-            # Send tts_start before first audio
-            if not tts_started:
-                tts_started = True
-                if not await safe_send(client_ws, {"type": "tts_start"}):
-                    return  # client gone
-                tts_first_audio_time = time.monotonic()
-
-            # Stream audio chunks (~85ms each at 24kHz)
-            chunk_size = 2048
-            chunk_n = 0
-            for i in range(0, len(audio), chunk_size):
-                if barge_in_event.is_set():
-                    break
-                chunk = audio[i : i + chunk_size]
-                b64 = float32_to_pcm16_b64(chunk)
-                if not await safe_send(client_ws, {"type": "audio_delta", "audio": b64}):
-                    return  # client gone — stop sending
-                if sentence_idx == 0 and chunk_n == 0:
-                    t_wire = time.monotonic()
-                    log(f"[flow-local] ⏱ first audio_delta sent  wire_delay={(t_wire - tts_first_audio_time)*1000:.1f}ms")
-                chunk_n += 1
-
-            sentences_sent += 1
-
-    # Start TTS consumer as background task
-    tts_task = asyncio.create_task(tts_consumer())
-    sentence_idx = 0
 
     # Build the system prompt — base prompt + optional context anchor.
     # anchor_line() returns "" when this is the first turn or context has nothing
@@ -2000,44 +2069,23 @@ async def translate_and_stream_tts(
                                 pending_sentence = pending_sentence[end_pos:]
 
                                 if complete:
-                                    # Stream text to client for progressive display
-                                    await safe_send(client_ws, {
-                                        "type": "translation_delta",
-                                        "text": complete + " ",
-                                    })
-                                    # Queue for TTS
-                                    await sentence_queue.put((complete, sentence_idx))
-                                    sentence_idx += 1
+                                    # Do not emit streaming text or TTS here. The
+                                    # full turn must pass validation before any
+                                    # irreversible speech payload is produced.
+                                    log(f"[flow-local] translation_candidate_sentence[{attempt}]='{complete[:80]}'")
                     except json.JSONDecodeError:
                         continue
 
             # LLM done — flush remaining text
             if pending_sentence.strip():
-                await safe_send(client_ws, {
-                    "type": "translation_delta",
-                    "text": pending_sentence.strip(),
-                })
-                await sentence_queue.put((pending_sentence.strip(), sentence_idx))
-                sentence_idx += 1
-
-            # Signal TTS consumer to stop
-            await sentence_queue.put(None)
-            llm_ms = (time.monotonic() - llm_start) * 1000
-
-            # Wait for TTS to finish
-            await tts_task
-
-            tts_first_ms = ((tts_first_audio_time - llm_start) * 1000) if tts_first_audio_time else 0
-            tts_total_ms = ((time.monotonic() - tts_total_start) * 1000) if tts_total_start else 0
+                log(f"[flow-local] translation_candidate_flush='{pending_sentence.strip()[:80]}'")
 
             log(f"[flow-local] LLM raw: '{full_text.strip()}'")
-            log(f"[flow-local] Streaming done: LLM={llm_ms:.0f}ms TTFT={llm_ttft_ms:.0f}ms first_audio={tts_first_ms:.0f}ms tts_total={tts_total_ms:.0f}ms sentences={sentences_sent}")
+            log(f"[flow-local] Translation done: TTFT={llm_ttft_ms:.0f}ms")
 
             # ── Post-LLM translation validation — BOTH directions ──────────────
-            # If the model returned the wrong language, catch it here and do ONE
-            # non-streaming retry with a stronger explicit prompt.
-            # TTS for this turn has already played; corrected text is returned
-            # so the client transcript panel shows the right output.
+            # If the model returned the wrong language, catch it here before
+            # any TTS request is issued, then do ONE non-streaming retry.
             #
             # EN → PT-BR: output must look like Portuguese.
             # PT → EN:    output must look like English.
@@ -2076,12 +2124,27 @@ async def translate_and_stream_tts(
                         log(f"[flow-local] ✅ EN→PT retry produced valid PT-BR: '{_corrected[:60]}'")
                         final_text = _corrected
                     else:
-                        log(f"[flow-local] ⚠️ EN→PT retry also failed PT-BR check: '{_corrected[:60]}' — keeping original")
+                        # LANGUAGE_LOCK: never present English as successful PT output.
+                        # None signals the caller to close the turn with recovery
+                        # (no translation_done, no history commit, no last_output cache).
+                        log(f"[lang_lock] ❌ EN→PT retry also failed PT-BR check: '{_corrected[:60]}' — failing turn")
+                        final_text = None
                 except Exception as _retry_err:
-                    log(f"[flow-local] ⚠️ EN→PT retry request failed: {_retry_err}")
+                    log(f"[lang_lock] ❌ EN→PT retry request failed: {_retry_err} — failing turn")
+                    final_text = None
 
             # ── Direction B: PT → EN ───────────────────────────────────────────
-            elif source_norm.startswith("pt") and target_lang == "en" and not _looks_like_english(final_text):
+            elif source_norm.startswith("pt") and target_lang == "en" and not _looks_like_english_translation(final_text):
+                _log_pt_to_en_language_lock_audit(
+                    turn_id=turn_id,
+                    source_transcript=audit_source_transcript,
+                    translation_input=text,
+                    translated_output=final_text,
+                    stage="initial_stream_output",
+                    source_language_confidence=source_stt_confidence,
+                    rejection_reason=_pt_to_en_language_lock_evidence(final_text)["rejection_reason"],
+                    final_decision="RETRY_REQUIRED",
+                )
                 log(f"[flow-local] ⚠️ PT→EN mismatch — output looks Portuguese ('{final_text[:60]}') — retrying")
                 _retry_prompt = (
                     "Translate the following text from Brazilian Portuguese to English. "
@@ -2108,15 +2171,48 @@ async def translate_and_stream_tts(
                                   .get("message", {})
                                   .get("content", "")
                                   .strip())
-                    if _corrected and _looks_like_english(_corrected):
+                    _retry_evidence = _pt_to_en_language_lock_evidence(_corrected)
+                    _retry_is_english = _retry_evidence["accepted"]
+                    _log_pt_to_en_language_lock_audit(
+                        turn_id=turn_id,
+                        source_transcript=audit_source_transcript,
+                        translation_input=text,
+                        translated_output=_corrected,
+                        stage="retry_output",
+                        source_language_confidence=source_stt_confidence,
+                        rejection_reason=(
+                            None if _corrected and _retry_is_english
+                            else "empty_retry_output" if not _corrected
+                            else _retry_evidence["rejection_reason"]
+                        ),
+                        final_decision=(
+                            "RESULT_ACCEPTED" if _corrected and _retry_is_english
+                            else "RESULT_REJECTED"
+                        ),
+                    )
+                    if _corrected and _retry_is_english:
                         log(f"[flow-local] ✅ PT→EN retry produced valid English: '{_corrected[:60]}'")
                         final_text = _corrected
                     else:
-                        log(f"[flow-local] ⚠️ PT→EN retry also failed EN check: '{_corrected[:60]}' — keeping original")
+                        log(f"[lang_lock] ❌ PT→EN retry also failed EN check: '{_corrected[:60]}' — failing turn")
+                        final_text = None
                 except Exception as _retry_err:
-                    log(f"[flow-local] ⚠️ PT→EN retry request failed: {_retry_err}")
+                    _log_pt_to_en_language_lock_audit(
+                        turn_id=turn_id,
+                        source_transcript=audit_source_transcript,
+                        translation_input=text,
+                        translated_output=final_text,
+                        stage="retry_request",
+                        source_language_confidence=source_stt_confidence,
+                        rejection_reason="retry_request_failed",
+                        final_decision="RESULT_REJECTED",
+                        error=_retry_err,
+                    )
+                    log(f"[lang_lock] ❌ PT→EN retry request failed: {_retry_err} — failing turn")
+                    final_text = None
 
-            return final_text, target_lang, llm_ms, tts_first_ms, tts_total_ms, llm_ttft_ms
+            llm_ms = (time.monotonic() - llm_start) * 1000
+            return final_text, target_lang, llm_ms, 0.0, 0.0, llm_ttft_ms
 
         except httpx.ConnectError:
             last_error = ErrorCode.LLM_UNAVAILABLE
@@ -2131,16 +2227,13 @@ async def translate_and_stream_tts(
         if attempt < OLLAMA_RETRIES:
             await asyncio.sleep(0.5)
 
-    # All retries failed — clean up TTS task
-    await sentence_queue.put(None)
-    await tts_task
-
     await safe_send(client_ws, {
         "type": "error",
         "error_code": last_error.value,
         "message": last_error.user_message(),
     })
-    return full_text.strip(), target_lang, 0, 0, 0
+    # 6 elements — caller unpacks 6 (was 5: latent ValueError on total LLM failure)
+    return None, target_lang, 0, 0, 0, 0
 
 
 # ---------------------------------------------------------------------------
@@ -2213,22 +2306,107 @@ def _prewarm_tts():
 # WebSocket handler — the main pipeline
 # ---------------------------------------------------------------------------
 
-# HARD SINGLE SESSION — only one active WebSocket at a time.
-# Second connection is rejected cleanly with code 4000.
-# Future: surface this state in client UI instead of silent reconnect.
-_active_ws: "WebSocket | None" = None
+# ── Session lease ─────────────────────────────────────────────────────────────
+# One active session at a time.  A new connection may take over only when the
+# existing client is disconnected, stale, or has explicitly backgrounded itself.
+# Takeover is blocked while the existing client is capturing, processing, or
+# playing TTS — an active conversation must never be interrupted silently.
+
+STALE_LEASE_S = 30.0   # seconds of inactivity → lease eligible for takeover
+
+@dataclass
+class _Lease:
+    ws: "WebSocket"
+    client_id: str
+    connected_at: float       # time.monotonic()
+    last_activity: float      # time.monotonic()
+    is_capturing: bool = False   # orb held / audio streaming
+    is_processing: bool = False  # STT → LLM → TTS pipeline active
+    is_speaking: bool = False    # TTS audio being delivered to client
+    backgrounded: bool = False   # client sent explicit session_release
+
+    def touch(self) -> None:
+        self.last_activity = time.monotonic()
+
+    def is_stale(self) -> bool:
+        return (time.monotonic() - self.last_activity) > STALE_LEASE_S
+
+    def is_blocking(self) -> bool:
+        """True if the session is actively doing something that must not be interrupted."""
+        return self.is_capturing or self.is_processing or self.is_speaking
+
+    def can_yield(self) -> bool:
+        """True if the session is willing / forced to release."""
+        return self.backgrounded or self.is_stale()
+
+
+_lease: "_Lease | None" = None
 _ws_lock = asyncio.Lock()
 
 
 @app.websocket("/ws")
 async def websocket_handler(client_ws: WebSocket):
-    global _active_ws
+    global _lease
+    incoming_cid = client_ws.query_params.get("cid", "unknown")
+
     async with _ws_lock:
-        if _active_ws is not None:
-            await client_ws.close(code=4000, reason="single-session: another client is active")
-            log("[flow-local] Rejected duplicate connection (4000)")
-            return
-        _active_ws = client_ws
+        if _lease is not None:
+            old = _lease
+            # Detect whether the old WebSocket is already gone
+            try:
+                old_dead = old.ws.client_state.name == "DISCONNECTED"
+            except Exception:
+                old_dead = True
+
+            if old_dead:
+                log(f"[session] Old WS disconnected — lease cleared, {incoming_cid} accepted")
+                _lease = None
+            elif old.is_blocking():
+                log(
+                    f"[session] Takeover blocked: capturing={old.is_capturing} "
+                    f"processing={old.is_processing} speaking={old.is_speaking} "
+                    f"— rejecting {incoming_cid}"
+                )
+                await client_ws.accept()
+                await client_ws.send_json({
+                    "type": "error",
+                    "code": "SESSION_BUSY",
+                    "message": "Flow is active on another device.",
+                })
+                await client_ws.close(code=4000, reason="Flow is active on another device.")
+                return
+            elif old.can_yield():
+                reason = "stale lease expired" if old.is_stale() else "backgrounded client released"
+                log(f"[session] Takeover accepted ({reason}): {old.client_id} → {incoming_cid}")
+                try:
+                    await old.ws.close(code=1001, reason="Session taken over by newer client")
+                except Exception:
+                    pass
+                _lease = None
+            else:
+                idle_s = time.monotonic() - old.last_activity
+                log(
+                    f"[session] Takeover blocked: idle {idle_s:.1f}s < {STALE_LEASE_S}s stale window "
+                    f"and not backgrounded — rejecting {incoming_cid}"
+                )
+                await client_ws.accept()
+                await client_ws.send_json({
+                    "type": "error",
+                    "code": "SESSION_BUSY",
+                    "message": "Flow is active on another device.",
+                })
+                await client_ws.close(code=4000, reason="Flow is active on another device.")
+                return
+
+        now = time.monotonic()
+        _lease = _Lease(
+            ws=client_ws,
+            client_id=incoming_cid,
+            connected_at=now,
+            last_activity=now,
+        )
+        log(f"[session] Acquired by {incoming_cid}")
+
     await client_ws.accept()
     log("[flow-local] Client connected")
 
@@ -2446,6 +2624,30 @@ async def websocket_handler(client_ws: WebSocket):
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "empty_transcript"})
                 return
 
+            # STT_SUCCESS_MUST_CLOSE_TURN (FLOW_STT_SUCCESS_RECOVERY_V1)
+            # Every post-STT-success skip path must close the turn through this
+            # helper: it attaches skip_class + heard_text so the phone can show
+            # what was heard, and emits a structured METRICS_SKIP line so
+            # blocked turns are countable by scripts/report_latency.py.
+            async def _skip_stt_success_turn(skip_reason, extra=None):
+                log("[flow-local] METRICS_SKIP: " + json.dumps({
+                    "turn_id": turn_count + 1,
+                    "skip_reason": skip_reason,
+                    "stt_ms": round(stt_ms),
+                    "stt_conf": round(stt_confidence, 2),
+                    "lang": detected_lang,
+                    "text_len": len(text),
+                }))
+                payload = {
+                    "type": "turn_complete",
+                    "skip_reason": skip_reason,
+                    "skip_class": "stt_success_block",
+                    "heard_text": text[:120],
+                }
+                if extra:
+                    payload.update(extra)
+                await client_ws.send_json(payload)
+
             # COMMIT QUALITY GUARD 2 — post-STT short-text quality gate
             # For transcripts ≤2 words: allow if in SHORT_ALLOWED or if the text is a
             # complete conversational intent (single-word question, greeting, etc.).
@@ -2529,21 +2731,34 @@ async def websocket_handler(client_ws: WebSocket):
                             _pt_collapse = True
                             _pt_collapse_reason = f"low_diversity (unique/total={_ratio:.2f})"
 
-                    # Rule 3 — repeated bigram or trigram
+                    # Rule 3 — repeated bigram or trigram, CONSECUTIVE only.
+                    # FLOW_STT_SUCCESS_RECOVERY_V1: scattered repeats are natural
+                    # rhetorical speech ("entra na mente da gente" said 3× across a
+                    # long turn must NOT block). True Whisper loops repeat the phrase
+                    # back-to-back — only that signature triggers.
                     if not _pt_collapse:
                         for _sz in (2, 3):
-                            _phrases = [" ".join(_pt_tokens[_j:_j+_sz]) for _j in range(_pt_n - _sz + 1)]
-                            for _ph in set(_phrases):
-                                if _phrases.count(_ph) >= 3:
-                                    _pt_collapse = True
-                                    _pt_collapse_reason = f"phrase_repeat≥3 ('{_ph}')"
-                                    break
+                            _j = 0
+                            _run = 1
+                            while _j + 2 * _sz <= _pt_n:
+                                if _pt_tokens[_j:_j + _sz] == _pt_tokens[_j + _sz:_j + 2 * _sz]:
+                                    _run += 1
+                                    if _run >= 3:
+                                        _pt_collapse = True
+                                        _pt_collapse_reason = (
+                                            f"consec_phrase_repeat≥3 ('{' '.join(_pt_tokens[_j:_j + _sz])}')"
+                                        )
+                                        break
+                                    _j += _sz
+                                else:
+                                    _run = 1
+                                    _j += 1
                             if _pt_collapse:
                                 break
 
                 if _pt_collapse:
                     log(f"[pt_guard] repetition_collapse ({_pt_collapse_reason}): \"{text[:80]}\"")
-                    await client_ws.send_json({"type": "turn_complete", "skip_reason": "pt_repetition_collapse"})
+                    await _skip_stt_success_turn("pt_repetition_collapse")
                     return
 
             # CONFIDENCE GUARD — short low-confidence turns
@@ -2553,7 +2768,7 @@ async def websocket_handler(client_ws: WebSocket):
             # transcript. Longer turns and high-confidence turns are unaffected.
             if len(text.split()) <= 3 and stt_confidence < 0.75:
                 log(f"[confidence_guard] short low-confidence turn: \"{text}\" conf={stt_confidence:.2f}")
-                await client_ws.send_json({"type": "turn_complete", "skip_reason": "low_confidence_short_turn"})
+                await _skip_stt_success_turn("low_confidence_short_turn")
                 return
 
             # ── 3-lane gate: fast Lane C ────────────────────────────
@@ -2635,12 +2850,8 @@ async def websocket_handler(client_ws: WebSocket):
                     "annotated_intended": None,
                     "failure_category": None, "audio_quality": None,
                 })
-                await client_ws.send_json({
-                    "type": "turn_complete",
-                    "skip_reason": "repeat_requested",
-                    "lane": "C",
-                    "reason": _fast_c_reason,
-                })
+                await _skip_stt_success_turn("repeat_requested",
+                                             extra={"lane": "C", "reason": _fast_c_reason})
                 turns_since_switch += 1
                 return
 
@@ -2787,12 +2998,8 @@ async def websocket_handler(client_ws: WebSocket):
                 })
 
             if turn_lane == 'C':
-                await client_ws.send_json({
-                    "type": "turn_complete",
-                    "skip_reason": "repeat_requested",
-                    "lane": "C",
-                    "reason": lane_reason,
-                })
+                await _skip_stt_success_turn("repeat_requested",
+                                             extra={"lane": "C", "reason": lane_reason})
                 turns_since_switch += 1
                 return
 
@@ -2806,7 +3013,7 @@ async def websocket_handler(client_ws: WebSocket):
 
             if _is_incomplete_thought(_guard_text):
                 log(f"[turn_hold] incomplete='{_guard_text}'")
-                await client_ws.send_json({"type": "turn_complete", "skip_reason": "incomplete_thought"})
+                await _skip_stt_success_turn("incomplete_thought")
                 turns_since_switch += 1
                 return
 
@@ -2817,35 +3024,51 @@ async def websocket_handler(client_ws: WebSocket):
                 log(f"[ctx_merge] prev='{ctx_prev[:40]}' + curr='{_orig_interpretation[:40]}'")
 
             barge_in_event.clear()
-            is_playing_tts = True
             full_translation, target_lang, llm_ms, tts_first_ms, tts_total_ms, llm_ttft_ms = \
                 await translate_and_stream_tts(
                     interpretation, active_lang,
                     preferred_target_lang if lock_target_lang else None,
                     client_ws, loop, turn_count, barge_in_event,
                     conv_ctx,
+                    source_transcript=text,
+                    source_stt_confidence=stt_confidence,
                 )
+
+            # FLOW_EN_TO_PT_LANGUAGE_LOCK_V1: None = language lock failed after retry.
+            # Close the turn with visible recovery; never commit or cache English
+            # as a PT translation. heard_text/metrics come from the helper's closure.
+            if full_translation is None:
+                is_playing_tts = False
+                await _skip_stt_success_turn("translation_language_lock_failed")
+                return
 
             if full_translation.strip() and _is_noop_output(
                 interpretation, full_translation, active_lang, target_lang
             ):
                 _tgt_name = "Portuguese" if active_lang.startswith("en") else "English"
-                _src_name = "English"    if active_lang.startswith("en") else "Portuguese"
                 log(f"[translation_guard] noop_detected → retry text=\"{full_translation.strip()[:80]}\"")
                 _retry_instr = (
                     f"Translate strictly into {_tgt_name}. "
                     f"Do NOT repeat input. Output must be natural and fluent."
                 )
-                full_translation, target_lang, *_ = await translate_and_stream_tts(
+                full_translation, target_lang, llm_ms, tts_first_ms, tts_total_ms, llm_ttft_ms = await translate_and_stream_tts(
                     interpretation, active_lang,
                     preferred_target_lang if lock_target_lang else None,
                     client_ws, loop, turn_count, barge_in_event,
                     conv_ctx,
                     extra_instruction=_retry_instr,
+                    source_transcript=text,
+                    source_stt_confidence=stt_confidence,
                 )
+                if full_translation is None:
+                    is_playing_tts = False
+                    await _skip_stt_success_turn("translation_language_lock_failed")
+                    return
                 if _is_noop_output(interpretation, full_translation, active_lang, target_lang):
                     log(f"[translation_guard] noop_detected → dropped text=\"{full_translation.strip()[:80]}\"")
-                    full_translation = ""
+                    is_playing_tts = False
+                    await _skip_stt_success_turn("translation_noop_failed")
+                    return
 
             if full_translation and full_translation.strip():
                 _raw = full_translation
@@ -2853,17 +3076,50 @@ async def websocket_handler(client_ws: WebSocket):
                 if full_translation != _raw:
                     log(f"[naturalize] raw=\"{_raw.strip()[:80]}\" → final=\"{full_translation.strip()[:80]}\"")
 
-            if full_translation.strip():
-                await client_ws.send_json({
-                    "type": "translation_done",
-                    "text": full_translation.strip(),
-                })
+            approved_translation = full_translation.strip()
+            if not approved_translation:
+                is_playing_tts = False
+                await _skip_stt_success_turn("empty_translation")
+                return
+            if active_lang.startswith("en") and str(target_lang).startswith("pt") and not _looks_like_portuguese(approved_translation):
+                log(f"[lang_lock] ❌ final EN→PT validation failed before TTS: '{approved_translation[:80]}'")
+                is_playing_tts = False
+                await _skip_stt_success_turn("translation_language_lock_failed")
+                return
+            if active_lang.startswith("pt") and target_lang == "en" and not _looks_like_english_translation(approved_translation):
+                _log_pt_to_en_language_lock_audit(
+                    turn_id=turn_count,
+                    source_transcript=text,
+                    translation_input=interpretation,
+                    translated_output=approved_translation,
+                    stage="final_approved_payload",
+                    source_language_confidence=stt_confidence,
+                    rejection_reason=_pt_to_en_language_lock_evidence(approved_translation)["rejection_reason"],
+                    final_decision="RESULT_REJECTED",
+                )
+                log(f"[lang_lock] ❌ final PT→EN validation failed before TTS: '{approved_translation[:80]}'")
+                is_playing_tts = False
+                await _skip_stt_success_turn("translation_language_lock_failed")
+                return
+
+            await client_ws.send_json({
+                "type": "translation_done",
+                "text": approved_translation,
+            })
+            log(f"[tts_boundary] approved_payload='{approved_translation[:120]}' lang={target_lang}")
+            is_playing_tts = True
+            _tts_first_local_ms, tts_total_ms, _tts_chunks = await synthesize_and_send(
+                approved_translation, target_lang, client_ws, barge_in_event
+            )
+            tts_first_ms = llm_ms + _tts_first_local_ms if _tts_first_local_ms else 0.0
+            if _tts_chunks == 0:
+                is_playing_tts = False
 
             _ctx_eligible = (
                 turn_lane in ('A', 'B')
                 and stt_confidence >= CONF_LOW_CONFIDENCE_FLOOR
                 and normalize_lang(detected_lang) is not None
-                and bool(full_translation.strip())
+                and bool(approved_translation)
                 and bool(_orig_interpretation.strip())
             )
             if _ctx_eligible:
@@ -2871,7 +3127,7 @@ async def websocket_handler(client_ws: WebSocket):
                 conv_ctx.update(active_lang, target_lang, _ctx_meaning)
                 log(f"[flow-local] [ctx] updated: dir={conv_ctx.direction} meaning='{conv_ctx.last_clean_meaning}'")
                 last_output = {
-                    "text":        full_translation.strip(),
+                    "text":        approved_translation,
                     "target_lang": target_lang,
                     "source_text": _orig_interpretation,
                     "direction":   f"{active_lang}→{target_lang}",
@@ -2917,6 +3173,10 @@ async def websocket_handler(client_ws: WebSocket):
             if commit_reason == "force_release":
                 _reset_turn_audio_stats()
             _force_release = False
+            if _lease is not None:
+                _lease.is_processing = False
+                _lease.is_speaking = False
+                _lease.touch()
 
     try:
         while True:
@@ -3006,10 +3266,22 @@ async def websocket_handler(client_ws: WebSocket):
                 )
                 continue
 
+            # Client explicitly releasing its session lease (backgrounded / pagehide)
+            if msg_type == "session_release":
+                if _lease is not None and _lease.ws is client_ws:
+                    _lease.backgrounded = True
+                    _lease.is_capturing = False
+                    _lease.touch()
+                log(f"[session] Release signal received from {incoming_cid}")
+                continue
+
             # Echo suppression: browser tells us when TTS playback ends
             if msg_type == "tts_playback_done":
                 is_playing_tts = False
                 tts_done_time = time.monotonic()
+                if _lease is not None:
+                    _lease.is_speaking = False
+                    _lease.touch()
                 barge_in_event.set()  # signal streaming TTS to stop
                 vad.reset_full()  # Clear LSTM state that accumulated TTS energy
                 log(f"[flow-local] TTS done → VAD reset, {POST_TTS_SILENCE_MS}ms silence window started")
@@ -3083,6 +3355,11 @@ async def websocket_handler(client_ws: WebSocket):
                 # ── Explicit UI action: user lifted finger off the orb ──────────────────
                 # Commit immediately — no debounce wait.
                 log("[release_signal] explicit_orb_release")
+                if _lease is not None:
+                    _lease.is_capturing = False
+                    _lease.is_processing = True
+                    _lease.backgrounded = False
+                    _lease.touch()
                 if chunks_received == 0:
                     _log_orb_release_stats("no_audio_received")
                     _reset_turn_audio_stats()
@@ -3148,6 +3425,10 @@ async def websocket_handler(client_ws: WebSocket):
                 chunks_received += 1
                 if chunks_received == 1:
                     log("[flow-local] First audio chunk received")
+                    if _lease is not None:
+                        _lease.is_capturing = True
+                        _lease.backgrounded = False
+                        _lease.touch()
 
                 # Echo suppression: discard mic audio while TTS is playing
                 if is_playing_tts:
@@ -3256,8 +3537,9 @@ async def websocket_handler(client_ws: WebSocket):
         if keepalive_task:
             keepalive_task.cancel()
         async with _ws_lock:
-            if _active_ws is client_ws:
-                _active_ws = None
+            if _lease is not None and _lease.ws is client_ws:
+                _lease = None
+                log(f"[session] Released by {incoming_cid}")
     log("[flow-local] Session ended")
 
 

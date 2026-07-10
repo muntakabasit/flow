@@ -4,6 +4,18 @@ const WIRE_RATE = 24000;
 const RECONNECT_DELAYS = [500, 1000, 2000, 4000, 8000, 15000];
 const PRECONNECT_CHUNK_LIMIT = 12;
 
+// Stable per-tab client identifier — survives page refresh within the same tab,
+// resets when the tab is closed (sessionStorage is per-tab, not persisted).
+const clientId = (() => {
+  const key = 'flow-cid';
+  let id = sessionStorage.getItem(key);
+  if (!id) {
+    id = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    sessionStorage.setItem(key, id);
+  }
+  return id;
+})();
+
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 if (!document.getElementById('orbBtn')) {
   throw new Error('[Flow] #orbBtn not found — HTML/JS version mismatch. Hard-reload the page.');
@@ -80,7 +92,7 @@ function escHtml(str) {
 
 function endpoint() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${location.host}/ws`;
+  return `${protocol}//${location.host}/ws?cid=${encodeURIComponent(clientId)}`;
 }
 
 function socketOpen() {
@@ -249,7 +261,7 @@ function connect() {
     showError('Connection interrupted. Retrying when possible.');
   };
 
-  socket.onclose = () => {
+  socket.onclose = event => {
     socket = null;
     serverReady = false;
     streaming = false;
@@ -257,6 +269,13 @@ function connect() {
       captureWanted = false;
       captureToken += 1;
       stopMicrophone();
+    }
+    if (event.code === 4000) {
+      // Another device holds an active session — do not auto-reconnect.
+      maintainConnection = false;
+      setState('error');
+      showError('Flow is active on another device.');
+      return;
     }
     if (maintainConnection && document.visibilityState === 'visible') {
       scheduleReconnect('Connection lost.');
@@ -507,6 +526,8 @@ window.addEventListener('blur', release);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     release();
+    // Tell the server this tab is backgrounded so another device can take over.
+    send({ type: 'session_release' });
   } else if (maintainConnection && !socketOpen()) {
     reconnectAttempt = 0;
     connect();
@@ -559,7 +580,12 @@ window.addEventListener('pagehide', () => {
   captureToken += 1;
   clearTimeout(reconnectTimer);
   stopMicrophone();
-  if (socketOpen()) socket.close(1000, 'page hidden');
+  if (socketOpen()) {
+    // Signal before closing so the server can immediately grant the lease
+    // to a waiting device rather than waiting for the TCP close to propagate.
+    send({ type: 'session_release' });
+    socket.close(1000, 'page hidden');
+  }
 });
 
 // ── Audio DSP ─────────────────────────────────────────────────────────────────
