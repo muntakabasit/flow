@@ -1,0 +1,2 @@
+{"model": "facebook/mms-1b-all", "adapter": "tir", "sample": "S01", "stt_ms": 14795, "peak_rss_gb": 3.06, "text": "ምነጌን ከሜ ኣርከይ ከመይ ኣለ ቤላ ክል ጽቡቕ ኣለና ለ ጠይፍቶ ጠይፋ ሃባ ናበ ይኬልካ ድዩ ኣለናኒ ናይ ጠፋና ያው ብቐራ ማልቲ ኽነራከብ ተስፋይ ይገብረህናይ ይስወጊ"}
+{"model": "facebook/mms-1b-all", "adapter": "tir", "sample": "S02", "stt_ms": 14852, "peak_rss_gb": 3.42, "text": "ከመይ ኣለጋ ኲሉ ሰላም ኣለና ኣለና ኒና ኣለና ጠፊኸድኻ ኣለናይ ጠፍና ንበቃ መወበቃ ብካልእማልቲ ኽንራከብንህረ"}
