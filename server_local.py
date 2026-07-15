@@ -29,6 +29,9 @@ import time
 import traceback
 import re
 import errno
+import resource
+import threading
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
@@ -39,13 +42,20 @@ import httpx
 import onnxruntime
 import mlx_whisper
 from piper import PiperVoice
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from websockets.exceptions import ConnectionClosedError
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from flow_turn_lifecycle import TurnLifecycle
+
 from flow_error_logger import writeFlowErrorLog
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 
 # Error codes for structured error handling
@@ -2232,8 +2242,78 @@ async def translate_and_stream_tts(
         "error_code": last_error.value,
         "message": last_error.user_message(),
     })
+    if last_error == ErrorCode.LLM_TIMEOUT:
+        FLOW_METRICS.inc("timed_out_turns_total")
     # 6 elements — caller unpacks 6 (was 5: latent ValueError on total LLM failure)
     return None, target_lang, 0, 0, 0, 0
+
+
+# ---------------------------------------------------------------------------
+# Local observability
+# ---------------------------------------------------------------------------
+
+_PROCESS_START_MONOTONIC = time.monotonic()
+_PROCESS = psutil.Process(os.getpid()) if psutil is not None else None
+
+
+def _current_rss_bytes() -> int:
+    if _PROCESS is not None:
+        return int(_PROCESS.memory_info().rss)
+
+    # Fallback is maximum resident set size, used only when psutil is absent.
+    rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    if sys.platform != "darwin":
+        rss *= 1024
+    return rss
+
+
+class _FlowMetrics:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._values = {
+            "connected_clients": 0,
+            "active_authoritative_lease": 0,
+            "active_capture": 0,
+            "active_stt": 0,
+            "active_translation": 0,
+            "active_tts": 0,
+            "successful_turns_total": 0,
+            "failed_turns_total": 0,
+            "rejected_sessions_total": 0,
+            "timed_out_turns_total": 0,
+        }
+
+    def inc(self, name: str, amount: int = 1) -> None:
+        with self._lock:
+            self._values[name] += amount
+
+    def dec(self, name: str, amount: int = 1) -> None:
+        with self._lock:
+            self._values[name] = max(0, self._values[name] - amount)
+
+    def set(self, name: str, value: int) -> None:
+        with self._lock:
+            self._values[name] = max(0, int(value))
+
+    @asynccontextmanager
+    async def active(self, name: str):
+        self.inc(name)
+        try:
+            yield
+        finally:
+            self.dec(name)
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            values = dict(self._values)
+        values.update({
+            "process_memory_rss_bytes": _current_rss_bytes(),
+            "process_uptime_seconds": round(time.monotonic() - _PROCESS_START_MONOTONIC, 3),
+        })
+        return values
+
+
+FLOW_METRICS = _FlowMetrics()
 
 
 # ---------------------------------------------------------------------------
@@ -2280,6 +2360,14 @@ async def health():
         "ollama_model": OLLAMA_MODEL,
         "tts": "piper",
     }
+
+
+@app.get("/metrics")
+async def metrics(request: Request):
+    client_host = request.client.host if request.client else ""
+    if client_host not in {"127.0.0.1", "::1", "localhost"}:
+        raise HTTPException(status_code=403, detail="metrics endpoint is local-only")
+    return FLOW_METRICS.snapshot()
 
 
 # ---------------------------------------------------------------------------
@@ -2377,6 +2465,8 @@ async def websocket_handler(client_ws: WebSocket):
             if old_dead:
                 log(f"[session] Old WS disconnected — lease cleared, {incoming_cid} accepted")
                 _lease = None
+                FLOW_METRICS.set("active_authoritative_lease", 0)
+                FLOW_METRICS.set("active_capture", 0)
             elif old.is_blocking():
                 log(
                     f"[session] Takeover blocked: capturing={old.is_capturing} "
@@ -2384,12 +2474,17 @@ async def websocket_handler(client_ws: WebSocket):
                     f"— rejecting {incoming_cid}"
                 )
                 await client_ws.accept()
-                await client_ws.send_json({
-                    "type": "error",
-                    "code": "SESSION_BUSY",
-                    "message": "Flow is active on another device.",
-                })
-                await client_ws.close(code=4000, reason="Flow is active on another device.")
+                FLOW_METRICS.inc("connected_clients")
+                FLOW_METRICS.inc("rejected_sessions_total")
+                try:
+                    await client_ws.send_json({
+                        "type": "error",
+                        "code": "SESSION_BUSY",
+                        "message": "Flow is active on another device.",
+                    })
+                    await client_ws.close(code=4000, reason="Flow is active on another device.")
+                finally:
+                    FLOW_METRICS.dec("connected_clients")
                 return
             elif old.can_yield():
                 reason = "stale lease expired" if old.is_stale() else "backgrounded client released"
@@ -2399,6 +2494,8 @@ async def websocket_handler(client_ws: WebSocket):
                 except Exception:
                     pass
                 _lease = None
+                FLOW_METRICS.set("active_authoritative_lease", 0)
+                FLOW_METRICS.set("active_capture", 0)
             else:
                 idle_s = time.monotonic() - old.last_activity
                 log(
@@ -2406,12 +2503,17 @@ async def websocket_handler(client_ws: WebSocket):
                     f"and not backgrounded — rejecting {incoming_cid}"
                 )
                 await client_ws.accept()
-                await client_ws.send_json({
-                    "type": "error",
-                    "code": "SESSION_BUSY",
-                    "message": "Flow is active on another device.",
-                })
-                await client_ws.close(code=4000, reason="Flow is active on another device.")
+                FLOW_METRICS.inc("connected_clients")
+                FLOW_METRICS.inc("rejected_sessions_total")
+                try:
+                    await client_ws.send_json({
+                        "type": "error",
+                        "code": "SESSION_BUSY",
+                        "message": "Flow is active on another device.",
+                    })
+                    await client_ws.close(code=4000, reason="Flow is active on another device.")
+                finally:
+                    FLOW_METRICS.dec("connected_clients")
                 return
 
         now = time.monotonic()
@@ -2422,8 +2524,10 @@ async def websocket_handler(client_ws: WebSocket):
             last_activity=now,
         )
         log(f"[session] Acquired by {incoming_cid}")
+        FLOW_METRICS.set("active_authoritative_lease", 1)
 
     await client_ws.accept()
+    FLOW_METRICS.inc("connected_clients")
     log("[flow-local] Client connected")
 
     # Per-session mode configuration (FIRST — before VAD creation)
@@ -2445,6 +2549,12 @@ async def websocket_handler(client_ws: WebSocket):
                                     # — 1200ms was sized for laptop speakers; phone has hardware AEC + short speaker-mic path
                                     # — hold-to-talk: vad.reset_full() already clears LSTM echo; this window is just trailing-reverb guard
     turn_count = 0                  # for latency logging
+    turn_seq = 0                    # authoritative per-session turn counter (every commit,
+                                    # success or skip) — turn_id = f"{session_id}-{turn_seq}"
+    tts_sent_time = 0.0             # monotonic timestamp when server finished sending TTS audio
+    TTS_PLAYBACK_MAX_WAIT_S = 25.0  # stale-speaking watchdog: if tts_playback_done never
+                                    # arrives, clear is_playing_tts after this bound so a lost
+                                    # client message cannot deadlock the next turn's audio
     keepalive_task = None           # background keepalive ping
     last_audio_time = time.monotonic()  # Track audio timeout
     barge_in_event = asyncio.Event()    # signal streaming TTS to stop on barge-in
@@ -2568,10 +2678,26 @@ async def websocket_handler(client_ws: WebSocket):
     async def _commit_segment(speech_audio, commit_reason, segment_duration_ms=0.0):
         nonlocal turn_count, turns_since_switch, last_output, is_playing_tts, _force_release
         nonlocal stable_lang, session_locked, candidate_lang, lang_switch_counter
+        nonlocal turn_seq, tts_sent_time
+
+        # FLOW_LIVE_TURN_STABILITY_V1 — authoritative turn identity + lifecycle evidence.
+        # turn_seq increments on EVERY commit (success or skip) so no two turns share an id.
+        turn_seq += 1
+        tl = TurnLifecycle(
+            turn_id=f"{session_id}-{turn_seq}",
+            client_id=incoming_cid,
+            capture_duration_ms=segment_duration_ms,
+            log_fn=lambda s: log(f"[flow-local] {s}"),
+        )
+        tl.transition("PROCESSING", commit_reason)
 
         try:
-            log(f"[turn_commit] reason={commit_reason}")
+            log(f"[turn_commit] reason={commit_reason} turn_id={tl.turn_id}")
             log(f"[flow-local] Speech stopped — segment {segment_duration_ms:.0f}ms")
+            if _lease is not None and _lease.ws is client_ws:
+                _lease.is_capturing = False
+                FLOW_METRICS.set("active_capture", 0)
+                _lease.touch()
             await client_ws.send_json({"type": "speech_stopped"})
             turn_start = time.monotonic()
 
@@ -2584,6 +2710,7 @@ async def websocket_handler(client_ws: WebSocket):
                 if commit_reason == "force_release":
                     _log_orb_release_stats("short_segment")
                 log(f"[flow-local] Turn skipped: short_segment ({segment_ms}ms < {MIN_SPEECH_SEGMENT_MS}ms)")
+                tl.complete("skipped:short_segment")
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "short_segment"})
                 return
 
@@ -2594,6 +2721,7 @@ async def websocket_handler(client_ws: WebSocket):
                 if commit_reason == "force_release":
                     _log_orb_release_stats("commit_guard_short")
                 log(f"[commit_guard] segment too short for STT ({segment_ms}ms < 300ms) — skipped")
+                tl.complete("skipped:commit_guard_short")
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "commit_guard_short"})
                 return
 
@@ -2610,16 +2738,18 @@ async def websocket_handler(client_ws: WebSocket):
             log(f"[turn_reset] prior_session_lang={stable_lang or 'none'} new_segment_started=1")
             stt_start = time.monotonic()
             pre_stt_ms = (stt_start - turn_start) * 1000
+            tl.stt_started()
             try:
                 async with stt_lock:   # serialise Metal GPU — only one Whisper at a time
-                    text, detected_lang, stt_confidence = await loop.run_in_executor(
-                        EXECUTOR,
-                        transcribe_segment,
-                        speech_audio,
-                        preferred_source_lang,       # manual preference only (or None)
-                        stable_lang is not None,     # skip_dual: True when session established
-                        None,                        # bias=None: no session tilt per fresh turn
-                    )
+                    async with FLOW_METRICS.active("active_stt"):
+                        text, detected_lang, stt_confidence = await loop.run_in_executor(
+                            EXECUTOR,
+                            transcribe_segment,
+                            speech_audio,
+                            preferred_source_lang,       # manual preference only (or None)
+                            stable_lang is not None,     # skip_dual: True when session established
+                            None,                        # bias=None: no session tilt per fresh turn
+                        )
                 stt_ms = (time.monotonic() - stt_start) * 1000
                 log(f"[segment_detect] detected={detected_lang} conf={stt_confidence:.2f} prior_session={stable_lang or 'none'}")
                 log(f"[flow-local] STT ({stt_ms:.0f}ms): [{detected_lang}] confidence={stt_confidence:.2f} text='{text}'")
@@ -2628,6 +2758,8 @@ async def websocket_handler(client_ws: WebSocket):
                 log(f"[flow-local] ❌ STT EXCEPTION ({stt_ms:.0f}ms): {type(e).__name__}: {e}")
                 import traceback
                 log(f"[flow-local] STT Traceback:\n{traceback.format_exc()}")
+                FLOW_METRICS.inc("failed_turns_total")
+                tl.complete("failed:stt_exception")
                 await client_ws.send_json({"type": "error", "code": "STT_FAILED", "message": "Could not understand speech"})
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "stt_exception"})
                 return
@@ -2637,6 +2769,7 @@ async def websocket_handler(client_ws: WebSocket):
                 if commit_reason == "force_release":
                     _log_orb_release_stats("empty_transcript")
                 log(f"[stt_guard] empty transcript — skipped (conf={stt_confidence:.2f})")
+                tl.complete("skipped:empty_transcript")
                 await client_ws.send_json({"type": "turn_complete", "skip_reason": "empty_transcript"})
                 return
 
@@ -2646,8 +2779,9 @@ async def websocket_handler(client_ws: WebSocket):
             # what was heard, and emits a structured METRICS_SKIP line so
             # blocked turns are countable by scripts/report_latency.py.
             async def _skip_stt_success_turn(skip_reason, extra=None):
+                tl.complete(f"skipped:{skip_reason}")
                 log("[flow-local] METRICS_SKIP: " + json.dumps({
-                    "turn_id": turn_count + 1,
+                    "turn_id": tl.turn_id,
                     "skip_reason": skip_reason,
                     "stt_ms": round(stt_ms),
                     "stt_conf": round(stt_confidence, 2),
@@ -2805,15 +2939,17 @@ async def websocket_handler(client_ws: WebSocket):
                 # Guarded EN retry — three-gate check before attempting
                 if _should_retry_as_english(detected_lang, text, stable_lang, preferred_source_lang or ""):
                     log(f"[flow-local] unknown_lang '{detected_lang}' — EN retry gate passed, retrying")
+                    tl.retry()
                     try:
                         async with stt_lock:   # serialise Metal GPU — same lock as primary STT
-                            _retry_text, _retry_lang, _retry_conf = await loop.run_in_executor(
-                                EXECUTOR,
-                                transcribe_segment,
-                                speech_audio,
-                                "en",   # forced English
-                                True,   # skip_dual — we already spent one pass
-                            )
+                            async with FLOW_METRICS.active("active_stt"):
+                                _retry_text, _retry_lang, _retry_conf = await loop.run_in_executor(
+                                    EXECUTOR,
+                                    transcribe_segment,
+                                    speech_audio,
+                                    "en",   # forced English
+                                    True,   # skip_dual — we already spent one pass
+                                )
                         # Log the retry event (phase=fast_retry — no final lane yet)
                         _write_accent_log({
                             "ts": time.time(), "session_id": session_id,
@@ -3040,21 +3176,24 @@ async def websocket_handler(client_ws: WebSocket):
                 log(f"[ctx_merge] prev='{ctx_prev[:40]}' + curr='{_orig_interpretation[:40]}'")
 
             barge_in_event.clear()
-            full_translation, target_lang, llm_ms, tts_first_ms, tts_total_ms, llm_ttft_ms = \
-                await translate_and_stream_tts(
-                    interpretation, active_lang,
-                    preferred_target_lang if lock_target_lang else None,
-                    client_ws, loop, turn_count, barge_in_event,
-                    conv_ctx,
-                    source_transcript=text,
-                    source_stt_confidence=stt_confidence,
-                )
+            tl.translation_started()
+            async with FLOW_METRICS.active("active_translation"):
+                full_translation, target_lang, llm_ms, tts_first_ms, tts_total_ms, llm_ttft_ms = \
+                    await translate_and_stream_tts(
+                        interpretation, active_lang,
+                        preferred_target_lang if lock_target_lang else None,
+                        client_ws, loop, turn_count, barge_in_event,
+                        conv_ctx,
+                        source_transcript=text,
+                        source_stt_confidence=stt_confidence,
+                    )
 
             # FLOW_EN_TO_PT_LANGUAGE_LOCK_V1: None = language lock failed after retry.
             # Close the turn with visible recovery; never commit or cache English
             # as a PT translation. heard_text/metrics come from the helper's closure.
             if full_translation is None:
                 is_playing_tts = False
+                FLOW_METRICS.inc("failed_turns_total")
                 await _skip_stt_success_turn("translation_language_lock_failed")
                 return
 
@@ -3067,22 +3206,27 @@ async def websocket_handler(client_ws: WebSocket):
                     f"Translate strictly into {_tgt_name}. "
                     f"Do NOT repeat input. Output must be natural and fluent."
                 )
-                full_translation, target_lang, llm_ms, tts_first_ms, tts_total_ms, llm_ttft_ms = await translate_and_stream_tts(
-                    interpretation, active_lang,
-                    preferred_target_lang if lock_target_lang else None,
-                    client_ws, loop, turn_count, barge_in_event,
-                    conv_ctx,
-                    extra_instruction=_retry_instr,
-                    source_transcript=text,
-                    source_stt_confidence=stt_confidence,
-                )
+                tl.retry()
+                tl.translation_started()
+                async with FLOW_METRICS.active("active_translation"):
+                    full_translation, target_lang, llm_ms, tts_first_ms, tts_total_ms, llm_ttft_ms = await translate_and_stream_tts(
+                        interpretation, active_lang,
+                        preferred_target_lang if lock_target_lang else None,
+                        client_ws, loop, turn_count, barge_in_event,
+                        conv_ctx,
+                        extra_instruction=_retry_instr,
+                        source_transcript=text,
+                        source_stt_confidence=stt_confidence,
+                    )
                 if full_translation is None:
                     is_playing_tts = False
+                    FLOW_METRICS.inc("failed_turns_total")
                     await _skip_stt_success_turn("translation_language_lock_failed")
                     return
                 if _is_noop_output(interpretation, full_translation, active_lang, target_lang):
                     log(f"[translation_guard] noop_detected → dropped text=\"{full_translation.strip()[:80]}\"")
                     is_playing_tts = False
+                    FLOW_METRICS.inc("failed_turns_total")
                     await _skip_stt_success_turn("translation_noop_failed")
                     return
 
@@ -3095,11 +3239,13 @@ async def websocket_handler(client_ws: WebSocket):
             approved_translation = full_translation.strip()
             if not approved_translation:
                 is_playing_tts = False
+                FLOW_METRICS.inc("failed_turns_total")
                 await _skip_stt_success_turn("empty_translation")
                 return
             if active_lang.startswith("en") and str(target_lang).startswith("pt") and not _looks_like_portuguese(approved_translation):
                 log(f"[lang_lock] ❌ final EN→PT validation failed before TTS: '{approved_translation[:80]}'")
                 is_playing_tts = False
+                FLOW_METRICS.inc("failed_turns_total")
                 await _skip_stt_success_turn("translation_language_lock_failed")
                 return
             if active_lang.startswith("pt") and target_lang == "en" and not _looks_like_english_translation(approved_translation):
@@ -3115,6 +3261,7 @@ async def websocket_handler(client_ws: WebSocket):
                 )
                 log(f"[lang_lock] ❌ final PT→EN validation failed before TTS: '{approved_translation[:80]}'")
                 is_playing_tts = False
+                FLOW_METRICS.inc("failed_turns_total")
                 await _skip_stt_success_turn("translation_language_lock_failed")
                 return
 
@@ -3124,12 +3271,18 @@ async def websocket_handler(client_ws: WebSocket):
             })
             log(f"[tts_boundary] approved_payload='{approved_translation[:120]}' lang={target_lang}")
             is_playing_tts = True
+            tl.tts_requested()
+            tl.transition("SPEAKING", "approved_payload_tts")
+            FLOW_METRICS.set("active_tts", 1)
             _tts_first_local_ms, tts_total_ms, _tts_chunks = await synthesize_and_send(
                 approved_translation, target_lang, client_ws, barge_in_event
             )
+            tts_sent_time = time.monotonic()   # stale-speaking watchdog anchor
             tts_first_ms = llm_ms + _tts_first_local_ms if _tts_first_local_ms else 0.0
             if _tts_chunks == 0:
                 is_playing_tts = False
+                FLOW_METRICS.set("active_tts", 0)
+                FLOW_METRICS.inc("failed_turns_total")
 
             _ctx_eligible = (
                 turn_lane in ('A', 'B')
@@ -3154,9 +3307,12 @@ async def websocket_handler(client_ws: WebSocket):
 
             turn_ms = (time.monotonic() - turn_start) * 1000
             turn_count += 1
+            if _tts_chunks > 0:
+                FLOW_METRICS.inc("successful_turns_total")
             turns_since_switch += 1
             if turn_count == 1:
                 log("[flow-local] ✅ First usable turn complete — session fully ready")
+            tl.complete("ok" if _tts_chunks > 0 else "failed:tts_no_audio")
             await client_ws.send_json({"type": "turn_complete"})
 
             metrics = {
@@ -3193,6 +3349,9 @@ async def websocket_handler(client_ws: WebSocket):
                 _lease.is_processing = False
                 _lease.is_speaking = False
                 _lease.touch()
+            # Single bounded turn summary — emitted on every path (success, skip,
+            # failure, disconnect). Idempotent; records invariant check results.
+            tl.finalize(cleanup_complete=True)
 
     try:
         while True:
@@ -3287,6 +3446,7 @@ async def websocket_handler(client_ws: WebSocket):
                 if _lease is not None and _lease.ws is client_ws:
                     _lease.backgrounded = True
                     _lease.is_capturing = False
+                    FLOW_METRICS.set("active_capture", 0)
                     _lease.touch()
                 log(f"[session] Release signal received from {incoming_cid}")
                 continue
@@ -3297,6 +3457,7 @@ async def websocket_handler(client_ws: WebSocket):
                 tts_done_time = time.monotonic()
                 if _lease is not None:
                     _lease.is_speaking = False
+                    FLOW_METRICS.set("active_tts", 0)
                     _lease.touch()
                 barge_in_event.set()  # signal streaming TTS to stop
                 vad.reset_full()  # Clear LSTM state that accumulated TTS energy
@@ -3337,6 +3498,7 @@ async def websocket_handler(client_ws: WebSocket):
 
                 await safe_send(client_ws, {"type": "tts_start"})
                 is_playing_tts = True
+                FLOW_METRICS.set("active_tts", 1)
                 barge_in_event.clear()
 
                 try:
@@ -3351,8 +3513,10 @@ async def websocket_handler(client_ws: WebSocket):
                             if not await safe_send(client_ws, {"type": "audio_delta", "audio": _b64}):
                                 break  # client gone
                     else:
+                        FLOW_METRICS.set("active_tts", 0)
                         log("[flow-local] [repeat] TTS produced no audio")
                 except Exception as _rep_err:
+                    FLOW_METRICS.set("active_tts", 0)
                     log(f"[flow-local] [repeat] TTS error: {_rep_err}")
 
                 await safe_send(client_ws, {
@@ -3375,6 +3539,7 @@ async def websocket_handler(client_ws: WebSocket):
                     _lease.is_capturing = False
                     _lease.is_processing = True
                     _lease.backgrounded = False
+                    FLOW_METRICS.set("active_capture", 0)
                     _lease.touch()
                 if chunks_received == 0:
                     _log_orb_release_stats("no_audio_received")
@@ -3444,11 +3609,28 @@ async def websocket_handler(client_ws: WebSocket):
                     if _lease is not None:
                         _lease.is_capturing = True
                         _lease.backgrounded = False
+                        FLOW_METRICS.set("active_capture", 1)
                         _lease.touch()
+                elif _lease is not None and not _lease.is_capturing:
+                    _lease.is_capturing = True
+                    _lease.backgrounded = False
+                    FLOW_METRICS.set("active_capture", 1)
+                    _lease.touch()
 
                 # Echo suppression: discard mic audio while TTS is playing
                 if is_playing_tts:
-                    continue
+                    # STALE-SPEAKING WATCHDOG (FLOW_LIVE_TURN_STABILITY_V1):
+                    # if the client's tts_playback_done was lost, is_playing_tts would
+                    # stay True forever and silently discard every future turn's audio.
+                    # Bounded recovery: clear speaking state after TTS_PLAYBACK_MAX_WAIT_S.
+                    if tts_sent_time and (time.monotonic() - tts_sent_time) > TTS_PLAYBACK_MAX_WAIT_S:
+                        is_playing_tts = False
+                        tts_done_time = time.monotonic()
+                        vad.reset_full()
+                        log(f"[turn_guard] stale speaking state cleared after "
+                            f"{TTS_PLAYBACK_MAX_WAIT_S:.0f}s — tts_playback_done never arrived")
+                    else:
+                        continue
                 # Post-TTS cooldown: discard mic audio for 600ms after TTS ends
                 # Prevents echo loop (mic picks up lingering TTS from speaker)
                 elapsed_since_tts = (time.monotonic() - tts_done_time) * 1000
@@ -3529,6 +3711,7 @@ async def websocket_handler(client_ws: WebSocket):
             time_since_audio = (time.monotonic() - last_audio_time) * 1000
             if time_since_audio > AUDIO_TIMEOUT_MS:
                 log(f"[flow-local] Audio safety timeout ({time_since_audio:.0f}ms) — closing session")
+                FLOW_METRICS.inc("timed_out_turns_total")
                 break
 
     except WebSocketDisconnect:
@@ -3541,6 +3724,7 @@ async def websocket_handler(client_ws: WebSocket):
         import traceback as tb
         log(f"[flow-local] ❌ UNHANDLED EXCEPTION: {type(e).__name__}: {e}")
         log(f"[flow-local] Full traceback:\n{tb.format_exc()}")
+        FLOW_METRICS.inc("failed_turns_total")
         try:
             await client_ws.send_json({
                 "type": "error",
@@ -3555,7 +3739,11 @@ async def websocket_handler(client_ws: WebSocket):
         async with _ws_lock:
             if _lease is not None and _lease.ws is client_ws:
                 _lease = None
+                FLOW_METRICS.set("active_authoritative_lease", 0)
+                FLOW_METRICS.set("active_capture", 0)
+                FLOW_METRICS.set("active_tts", 0)
                 log(f"[session] Released by {incoming_cid}")
+        FLOW_METRICS.dec("connected_clients")
     log("[flow-local] Session ended")
 
 
