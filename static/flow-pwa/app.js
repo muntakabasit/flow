@@ -61,9 +61,14 @@ let preconnectChunks = [];
 
 let audioQueue = [];
 let playingAudio = false;
+let activeAudioSource = null;
+let playbackGeneration = 0;
+let playbackSuppressed = false;
 let ttsStarted = false;
 let ttsDoneSent = false;
 let turnComplete = false;
+let releaseSignalsSent = new Set();
+let sessionReleaseQueued = false;
 
 // ── Hold-control state ────────────────────────────────────────────────────────
 //
@@ -275,6 +280,8 @@ function connect() {
 
   socket.onopen = () => {
     reconnectAttempt = 0;
+    sessionReleaseQueued = false;
+    releaseSignalsSent.clear();
     showError('');
     send({ type: 'mode_preference', mode: 'stable' });
   };
@@ -334,6 +341,99 @@ function scheduleReconnect(message) {
 function send(message) {
   if (!socketOpen()) return false;
   socket.send(JSON.stringify(message));
+  return true;
+}
+
+function socketStateLabel() {
+  if (!socket) return 'none';
+  return ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][socket.readyState] || String(socket.readyState);
+}
+
+function signalSessionRelease(reason, { closeSocket = false } = {}) {
+  const socketState = socketStateLabel();
+  console.info(`[session_release] attempted reason=${reason} socket_state=${socketState}`);
+
+  if (releaseSignalsSent.has(reason)) {
+    console.info(`[session_release] queued reason=${reason} duplicate=true`);
+  } else {
+    releaseSignalsSent.add(reason);
+  }
+
+  if (sessionReleaseQueued) {
+    console.info(`[session_release] queued reason=${reason} duplicate=true`);
+    return true;
+  }
+
+  if (!socketOpen()) {
+    console.info(`[session_release] skipped reason=socket_not_open socket_state=${socketState}`);
+    return false;
+  }
+
+  socket.send(JSON.stringify({ type: 'session_release', reason }));
+  sessionReleaseQueued = true;
+  console.info(`[session_release] queued reason=${reason}`);
+
+  if (closeSocket) {
+    const socketToClose = socket;
+    setTimeout(() => {
+      if (socketToClose && socketToClose.readyState === WebSocket.OPEN) {
+        socketToClose.close(1000, reason);
+      }
+    }, 150);
+  }
+  return true;
+}
+
+function signalPlaybackDone(reason, { playbackWasOwned = false } = {}) {
+  if ((!ttsStarted && !playbackWasOwned) || ttsDoneSent || !socketOpen()) return false;
+  socket.send(JSON.stringify({ type: 'tts_playback_done', reason }));
+  ttsDoneSent = true;
+  return true;
+}
+
+function cleanupPlaybackForLifecycle(reason) {
+  playbackSuppressed = true;
+  const playbackWasOwned = Boolean(
+    activeAudioSource || playingAudio || audioQueue.length || ttsStarted
+  );
+  if (!playbackWasOwned) return true;
+
+  ++playbackGeneration;
+  const source = activeAudioSource;
+  let cleanupConfirmed = true;
+
+  if (source) {
+    source.onended = null;
+    try {
+      source.stop(0);
+    } catch (error) {
+      cleanupConfirmed = false;
+      console.warn(`[tts_playback_cleanup] unconfirmed reason=${reason} error=${error.message}`);
+    }
+  }
+
+  audioQueue.length = 0;
+  playingAudio = false;
+  ttsStarted = false;
+  activeAudioSource = null;
+
+  if (source) {
+    try {
+      source.disconnect();
+    } catch (error) {
+      cleanupConfirmed = false;
+      console.warn(`[tts_playback_cleanup] unconfirmed reason=${reason} error=${error.message}`);
+    }
+  }
+
+  cleanupConfirmed = cleanupConfirmed &&
+    activeAudioSource === null &&
+    audioQueue.length === 0 &&
+    !playingAudio &&
+    !ttsStarted;
+
+  if (!cleanupConfirmed) return false;
+  signalPlaybackDone(reason, { playbackWasOwned: true });
   return true;
 }
 
@@ -478,6 +578,7 @@ function onOrbStart(event) {
   captureWanted = true;
   maintainConnection = true;
   turnComplete = false;
+  playbackSuppressed = false;
   ttsStarted = false;
   ttsDoneSent = false;
   pendingSource = { text: '', lang: '' };
@@ -553,16 +654,22 @@ orbBtn.addEventListener('keyup', e => {
 // ── Safety release ────────────────────────────────────────────────────────────
 // Incoming call, app-switch, or any reason the window loses focus during capture.
 
-window.addEventListener('blur', release);
+window.addEventListener('blur', () => {
+  release();
+  signalSessionRelease('app_backgrounded');
+});
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     release();
-    // Tell the server this tab is backgrounded so another device can take over.
-    send({ type: 'session_release' });
-  } else if (maintainConnection && !socketOpen()) {
-    reconnectAttempt = 0;
-    connect();
+    cleanupPlaybackForLifecycle('visibility_hidden');
+    signalSessionRelease('visibility_hidden');
+  } else {
+    playbackSuppressed = false;
+    if (maintainConnection && !socketOpen()) {
+      reconnectAttempt = 0;
+      connect();
+    }
   }
 });
 
@@ -594,6 +701,8 @@ shareBtn.addEventListener('click', () => {
 reconnectButton.addEventListener('click', () => {
   maintainConnection = true;
   reconnectAttempt = 0;
+  sessionReleaseQueued = false;
+  releaseSignalsSent.clear();
   showError('');
   connect();
 });
@@ -612,12 +721,14 @@ window.addEventListener('pagehide', () => {
   captureToken += 1;
   clearTimeout(reconnectTimer);
   stopMicrophone();
-  if (socketOpen()) {
-    // Signal before closing so the server can immediately grant the lease
-    // to a waiting device rather than waiting for the TCP close to propagate.
-    send({ type: 'session_release' });
-    socket.close(1000, 'page hidden');
-  }
+  cleanupPlaybackForLifecycle('pagehide');
+  // Signal before closing so the server can immediately grant the lease
+  // to a waiting device rather than waiting for the TCP close to propagate.
+  signalSessionRelease('pagehide', { closeSocket: true });
+});
+
+window.addEventListener('beforeunload', () => {
+  signalSessionRelease('explicit_disconnect');
 });
 
 // ── Audio DSP ─────────────────────────────────────────────────────────────────
@@ -650,14 +761,17 @@ function pcm16Base64(samples) {
 
 // ── TTS playback ──────────────────────────────────────────────────────────────
 function enqueueAudio(base64) {
+  if (playbackSuppressed) return false;
   ttsStarted = true;
-  ttsDoneSent = false;
   audioQueue.push(base64);
   if (!playingAudio) playNextAudio();
+  return true;
 }
 
-function playNextAudio() {
+function playNextAudio(generation = playbackGeneration) {
+  if (generation !== playbackGeneration || playbackSuppressed) return;
   if (!audioQueue.length) {
+    activeAudioSource = null;
     playingAudio = false;
     notifyTTSPlaybackDone();
     if (turnComplete) finishTurn();
@@ -675,14 +789,17 @@ function playNextAudio() {
   const source  = context.createBufferSource();
   source.buffer = buffer;
   source.connect(context.destination);
-  source.onended = playNextAudio;
+  activeAudioSource = source;
+  source.onended = () => {
+    if (activeAudioSource === source) activeAudioSource = null;
+    if (generation !== playbackGeneration || playbackSuppressed) return;
+    playNextAudio(generation);
+  };
   source.start();
 }
 
 function notifyTTSPlaybackDone() {
-  if (!ttsStarted || ttsDoneSent) return;
-  ttsDoneSent = true;
-  send({ type: 'tts_playback_done' });
+  signalPlaybackDone('playback_complete');
 }
 
 function finishTurn() {
@@ -735,7 +852,9 @@ function handleMessage(message) {
       break;
 
     case 'tts_start':
+      if (playbackSuppressed) break;
       ttsStarted = true;
+      ttsDoneSent = false;
       setState('speaking');
       break;
 
@@ -765,7 +884,7 @@ function handleMessage(message) {
 
 // ── Service worker ────────────────────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => {});
+  navigator.serviceWorker.register('/static/flow-pwa/sw.js', { scope: '/static/flow-pwa/' }).catch(() => {});
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
