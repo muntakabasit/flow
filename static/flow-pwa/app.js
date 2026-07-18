@@ -3,6 +3,8 @@
 const WIRE_RATE = 24000;
 const RECONNECT_DELAYS = [500, 1000, 2000, 4000, 8000, 15000];
 const PRECONNECT_CHUNK_LIMIT = 12;
+const CAPTURE_MIN_DURATION_MS = 800;
+const CAPTURE_TRAILING_GRACE_MS = 150;
 
 // Stable per-tab client identifier — survives page refresh within the same tab,
 // resets when the tab is closed (sessionStorage is per-tab, not persisted).
@@ -70,14 +72,15 @@ let turnComplete = false;
 let releaseSignalsSent = new Set();
 let sessionReleaseQueued = false;
 
-// ── Hold-control state ────────────────────────────────────────────────────────
-//
-// gestureSource tracks which event type owns the current capture so that the
-// pointer-event listener and the touch-event fallback never double-fire.
-// 'pointer' | 'touch' | null
-let gestureSource  = null;
-// activePointerId guards against stale up/cancel from a second simultaneous touch
-let activePointerId = null;
+// ── Tap-toggle capture state ──────────────────────────────────────────────────
+let capturePhase = 'idle'; // idle | recording | committing
+let captureGeneration = 0;
+let captureStartedAt = null;
+let captureStopTimer = null;
+let captureStopPending = false;
+let captureCommitLocked = false;
+let suppressKeyboardClick = false;
+let keyboardClickResetTimer = null;
 
 // ── Turn management ───────────────────────────────────────────────────────────
 let turns = [];
@@ -102,6 +105,13 @@ function endpoint() {
 
 function socketOpen() {
   return socket && socket.readyState === WebSocket.OPEN;
+}
+
+function monotonicNow() {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now();
+  }
+  return Date.now();
 }
 
 // ── State machine ─────────────────────────────────────────────────────────────
@@ -144,9 +154,9 @@ function setState(next, message) {
 
   if (next !== 'processing' && next !== 'listening') {
     setOrbLabel({
-      ready: 'HOLD TO SPEAK', connecting: 'CONNECTING…', speaking: 'SPEAKING…',
+      ready: 'TAP TO RECORD', connecting: 'CONNECTING…', speaking: 'SPEAKING…',
       offline: 'RECONNECTING…', error: 'RECONNECT BELOW'
-    }[next] || 'HOLD TO SPEAK', false);
+    }[next] || 'TAP TO RECORD', false);
   } else if (next === 'listening') {
     setOrbLabel('LISTENING…', false);
   }
@@ -307,6 +317,7 @@ function connect() {
       captureToken += 1;
       stopMicrophone();
     }
+    resetCaptureControl({ invalidateGeneration: true });
     if (event.code === 4000) {
       // Another device holds an active session — do not auto-reconnect.
       maintainConnection = false;
@@ -446,7 +457,7 @@ function sendAudio(base64) {
 // ── Microphone ────────────────────────────────────────────────────────────────
 //
 // handleStream receives the streamPromise that was created synchronously inside
-// the user-gesture handler (onOrbStart), so getUserMedia activation is already
+// the completed activation handler, so getUserMedia activation is already
 // established when this async function runs.
 
 async function handleStream(streamPromise) {
@@ -476,10 +487,9 @@ async function handleStream(streamPromise) {
   } catch (error) {
     if (!captureWanted || token !== captureToken) return;
     captureWanted = false;
-    gestureSource  = null;
-    activePointerId = null;
-    orbPress.classList.remove('is-pressed');
-    orbBtn.setAttribute('aria-pressed', 'false');
+    captureToken += 1;
+    stopMicrophone();
+    resetCaptureControl({ invalidateGeneration: true });
     setState('ready');
     showError(`Microphone unavailable: ${error.message}`);
   }
@@ -511,45 +521,42 @@ function maybeStartStreaming() {
   preconnectChunks = [];
 }
 
-// ── Hold control ──────────────────────────────────────────────────────────────
+// ── Tap-toggle capture control ────────────────────────────────────────────────
 //
-// iOS Safari issues addressed here:
-//
-//  1. Composited-layer touch interception — fixed in CSS (pointer-events:none on
-//     .orb-press and .orb-anim).  The <button> receives events directly.
-//
-//  2. User activation across async boundaries — getAudioContext() and
-//     getUserMedia() are called synchronously in onOrbStart(), before any await
-//     and before event.preventDefault(), so WebKit can't revoke the activation.
-//
-//  3. Pointer/touch double-fire — gestureSource flag: if pointerdown fires,
-//     touchstart for the same gesture is ignored and vice-versa.
-//
-//  4. Safety release — release() is also bound to window.blur and
-//     document hidden so an incoming call or app-switch closes the mic.
+// The completed button activation is the only normal input boundary. Audio APIs
+// still run synchronously in that user gesture so Safari retains activation.
 
-function onOrbStart(event) {
-  // Already recording — ignore extra events
-  if (captureWanted) return;
+function resetCaptureControl({ invalidateGeneration = false } = {}) {
+  clearTimeout(captureStopTimer);
+  captureStopTimer = null;
+  if (invalidateGeneration) captureGeneration += 1;
+  capturePhase = 'idle';
+  captureStartedAt = null;
+  captureStopPending = false;
+  captureCommitLocked = false;
+  orbPress.classList.remove('is-pressed');
+  orbBtn.setAttribute('aria-pressed', 'false');
+}
 
-  // Dedup: each gesture is handled by exactly one event family
-  if (event.type === 'pointerdown') {
-    if (event.pointerType === 'mouse' && event.button !== 0) return;
-    gestureSource = 'pointer';
-    activePointerId = event.pointerId ?? null;
-  } else if (event.type === 'touchstart') {
-    if (gestureSource === 'pointer') return;   // already handled by pointerdown
-    gestureSource = 'touch';
+function startCapture() {
+  if (
+    capturePhase !== 'idle' ||
+    captureStopPending ||
+    captureCommitLocked ||
+    appState !== 'ready'
+  ) {
+    return false;
   }
 
-  // ── User-gesture critical section ──────────────────────────────────────────
-  // Both calls must happen synchronously in the event handler before any await
-  // or preventDefault to satisfy WebKit's activation requirements.
-
-  getAudioContext();   // create/resume AudioContext within gesture
+  maintainConnection = true;
+  if (!socketOpen() || !serverReady) {
+    if (!socketOpen()) connect();
+    return false;
+  }
 
   let streamPromise;
   try {
+    getAudioContext();
     streamPromise = navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -559,24 +566,16 @@ function onOrbStart(event) {
       }
     });
   } catch (err) {
-    gestureSource   = null;
-    activePointerId = null;
     showError(`Microphone unavailable: ${err.message}`);
-    return;
-  }
-  // ── End user-gesture critical section ──────────────────────────────────────
-
-  // Prevent scroll/zoom/context-menu AFTER the activation calls above
-  event.preventDefault();
-
-  // Best-effort pointer capture (keeps pointerup firing even if finger drifts)
-  if (event.type === 'pointerdown' && activePointerId !== null) {
-    try { orbBtn.setPointerCapture(activePointerId); } catch {}
+    return false;
   }
 
-  // State
+  captureGeneration += 1;
+  capturePhase = 'recording';
+  captureStartedAt = monotonicNow();
+  captureStopPending = false;
+  captureCommitLocked = false;
   captureWanted = true;
-  maintainConnection = true;
   turnComplete = false;
   playbackSuppressed = false;
   ttsStarted = false;
@@ -589,66 +588,122 @@ function onOrbStart(event) {
   orbPress.classList.add('is-pressed');
   orbBtn.setAttribute('aria-pressed', 'true');
   showError('');
-  setState(serverReady && socketOpen() ? 'listening' : 'connecting');
+  setState('listening');
 
-  // Async tail — stream promise already requested above
   handleStream(streamPromise);
-  connect();
   maybeStartStreaming();
+  return true;
 }
 
-function onOrbEnd(event) {
-  // Pointer family: guard against stale events from a different touch point
-  if (event.type === 'pointerup' || event.type === 'pointercancel' || event.type === 'lostpointercapture') {
-    if (activePointerId !== null && event.pointerId !== undefined && event.pointerId !== activePointerId) return;
+function commitCapture(generation, { requireStreaming = false } = {}) {
+  if (
+    generation !== captureGeneration ||
+    capturePhase !== 'recording' ||
+    !captureStopPending ||
+    captureCommitLocked
+  ) {
+    return false;
   }
-  // Touch family: ignore if pointer events already own this gesture
-  if ((event.type === 'touchend' || event.type === 'touchcancel') && gestureSource !== 'touch') return;
 
-  event?.preventDefault?.();
-  release();
-}
+  clearTimeout(captureStopTimer);
+  captureStopTimer = null;
+  captureCommitLocked = true;
+  captureStopPending = false;
+  capturePhase = 'committing';
+  captureWanted = false;
+  captureToken += 1;
 
-function release() {
-  if (!captureWanted) return;
-  captureWanted   = false;
-  gestureSource   = null;
-  activePointerId = null;
-  ++captureToken;
   soundOrbRelease();
   orbPress.classList.remove('is-pressed');
   orbBtn.setAttribute('aria-pressed', 'false');
   const hadStreaming = streaming;
   stopMicrophone();
-  if (hadStreaming && send({ type: 'orb_released' })) {
+
+  if ((!requireStreaming || hadStreaming) && send({ type: 'orb_released' })) {
     setState('processing');
-  } else if (serverReady && socketOpen()) {
-    setState('ready');
+    return true;
   }
+
+  resetCaptureControl({ invalidateGeneration: true });
+  if (serverReady && socketOpen()) setState('ready');
+  return false;
+}
+
+function requestCaptureStop() {
+  if (
+    capturePhase !== 'recording' ||
+    captureStopPending ||
+    captureCommitLocked
+  ) {
+    return false;
+  }
+
+  captureStopPending = true;
+  const generation = captureGeneration;
+  const elapsedMs = captureStartedAt === null ? 0 : monotonicNow() - captureStartedAt;
+  const minimumRemainingMs = Math.max(0, CAPTURE_MIN_DURATION_MS - elapsedMs);
+
+  captureStopTimer = setTimeout(() => {
+    if (
+      generation !== captureGeneration ||
+      capturePhase !== 'recording' ||
+      !captureStopPending ||
+      captureCommitLocked
+    ) {
+      return;
+    }
+    captureStopTimer = setTimeout(() => {
+      commitCapture(generation);
+    }, CAPTURE_TRAILING_GRACE_MS);
+  }, minimumRemainingMs);
+  return true;
+}
+
+function toggleCapture() {
+  if (capturePhase === 'idle') return startCapture();
+  if (capturePhase === 'recording') return requestCaptureStop();
+  return false;
+}
+
+// Lifecycle release remains immediate so existing background behavior is not
+// changed by the normal tap-toggle timing contract.
+function release() {
+  if (capturePhase !== 'recording' || captureCommitLocked) return false;
+  clearTimeout(captureStopTimer);
+  captureStopTimer = null;
+  captureStopPending = true;
+  return commitCapture(captureGeneration, { requireStreaming: true });
 }
 
 // ── Orb event listeners ───────────────────────────────────────────────────────
 
-// Pointer events — iOS 13+, all modern browsers
-orbBtn.addEventListener('pointerdown',        onOrbStart, { passive: false });
-orbBtn.addEventListener('pointerup',          onOrbEnd);
-orbBtn.addEventListener('pointercancel',      onOrbEnd);
-orbBtn.addEventListener('lostpointercapture', onOrbEnd);
-
-// Touch fallback — belt-and-suspenders for older WebKit / pointer-event edge cases
-orbBtn.addEventListener('touchstart',  onOrbStart, { passive: false });
-orbBtn.addEventListener('touchend',    onOrbEnd,   { passive: false });
-orbBtn.addEventListener('touchcancel', onOrbEnd);
+orbBtn.addEventListener('click', event => {
+  event.preventDefault();
+  if (suppressKeyboardClick) {
+    suppressKeyboardClick = false;
+    return;
+  }
+  toggleCapture();
+});
 
 // Prevent long-press context menu on mobile Safari
 orbBtn.addEventListener('contextmenu', e => e.preventDefault());
 
 // Keyboard (accessibility)
 orbBtn.addEventListener('keydown', e => {
-  if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) onOrbStart(e);
+  if (e.key !== ' ' && e.key !== 'Enter') return;
+  e.preventDefault();
+  if (e.repeat) return;
+  suppressKeyboardClick = true;
+  toggleCapture();
 });
 orbBtn.addEventListener('keyup', e => {
-  if (e.key === ' ' || e.key === 'Enter') onOrbEnd(e);
+  if (e.key !== ' ' && e.key !== 'Enter') return;
+  e.preventDefault();
+  clearTimeout(keyboardClickResetTimer);
+  keyboardClickResetTimer = setTimeout(() => {
+    suppressKeyboardClick = false;
+  }, 0);
 });
 
 // ── Safety release ────────────────────────────────────────────────────────────
@@ -810,6 +865,7 @@ function finishTurn() {
   }
   turnComplete = false;
   ttsStarted   = false;
+  resetCaptureControl();
   if (!captureWanted) setState(serverReady ? 'ready' : 'offline');
 }
 
@@ -877,7 +933,10 @@ function handleMessage(message) {
 
     case 'error':
       showError(message.message || 'Flow could not complete this turn.');
-      if (!captureWanted && !playingAudio) setState('ready');
+      if (!captureWanted && !playingAudio) {
+        resetCaptureControl({ invalidateGeneration: true });
+        setState('ready');
+      }
       break;
   }
 }
