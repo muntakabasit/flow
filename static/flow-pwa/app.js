@@ -41,6 +41,7 @@ const copyBtn         = document.getElementById('copyBtn');
 const copyIcon        = document.getElementById('copyIcon');
 const copyLabel       = document.getElementById('copyLabel');
 const shareBtn        = document.getElementById('shareBtn');
+const repeatBtn       = document.getElementById('repeatBtn');
 const errorText       = document.getElementById('errorText');
 const reconnectButton = document.getElementById('reconnectButton');
 
@@ -88,6 +89,9 @@ let pendingSource = { text: '', lang: '' };
 let pendingTarget = { text: '', lang: '' };
 let currentPair = { sourceLang: 'English', targetLang: 'Portuguese', isPortuguese: false };
 let lastActionsText = '';
+let repeatAvailable = false;
+let repeatActive = false;
+let repeatDoneReceived = false;
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 function escHtml(str) {
@@ -167,7 +171,24 @@ function setState(next, message) {
     lastActions.hidden = true;
   }
 
+  syncRepeatControl();
   reconnectButton.hidden = next !== 'error';
+}
+
+function syncRepeatControl() {
+  repeatBtn.hidden = !repeatAvailable;
+  repeatBtn.disabled = (
+    !repeatAvailable ||
+    repeatActive ||
+    appState !== 'ready' ||
+    capturePhase !== 'idle' ||
+    captureStopPending ||
+    captureCommitLocked ||
+    playingAudio ||
+    audioQueue.length > 0 ||
+    !serverReady ||
+    !socketOpen()
+  );
 }
 
 function setOrbLabel(text, isTranscript) {
@@ -207,6 +228,8 @@ function addTurnCard(source, target) {
   lastSrc.textContent = `${turn.sourceLang}: ${turn.sourceText}`;
   lastTgt.textContent = `${turn.targetLang}: ${turn.targetText}`;
   lastActionsText = `${turn.sourceLang}: ${turn.sourceText}\n${turn.targetLang}: ${turn.targetText}`;
+  repeatAvailable = Boolean(turn.targetText.trim());
+  syncRepeatControl();
 }
 
 function renderTurns() {
@@ -309,6 +332,11 @@ function connect() {
   };
 
   socket.onclose = event => {
+    if (repeatActive) {
+      cleanupPlaybackForLifecycle('disconnect');
+      repeatActive = false;
+      repeatDoneReceived = false;
+    }
     socket = null;
     serverReady = false;
     streaming = false;
@@ -318,6 +346,7 @@ function connect() {
       stopMicrophone();
     }
     resetCaptureControl({ invalidateGeneration: true });
+    syncRepeatControl();
     if (event.code === 4000) {
       // Another device holds an active session — do not auto-reconnect.
       maintainConnection = false;
@@ -407,7 +436,14 @@ function cleanupPlaybackForLifecycle(reason) {
   const playbackWasOwned = Boolean(
     activeAudioSource || playingAudio || audioQueue.length || ttsStarted
   );
-  if (!playbackWasOwned) return true;
+  if (!playbackWasOwned) {
+    if (repeatActive) {
+      repeatActive = false;
+      repeatDoneReceived = false;
+      if (!captureWanted) setState(serverReady && socketOpen() ? 'ready' : 'offline');
+    }
+    return true;
+  }
 
   ++playbackGeneration;
   const source = activeAudioSource;
@@ -445,6 +481,11 @@ function cleanupPlaybackForLifecycle(reason) {
 
   if (!cleanupConfirmed) return false;
   signalPlaybackDone(reason, { playbackWasOwned: true });
+  if (repeatActive) {
+    repeatActive = false;
+    repeatDoneReceived = false;
+    if (!captureWanted) setState(serverReady && socketOpen() ? 'ready' : 'offline');
+  }
   return true;
 }
 
@@ -752,6 +793,10 @@ shareBtn.addEventListener('click', () => {
   }
 });
 
+repeatBtn.addEventListener('click', () => {
+  requestRepeat();
+});
+
 // ── Reconnect ─────────────────────────────────────────────────────────────────
 reconnectButton.addEventListener('click', () => {
   maintainConnection = true;
@@ -828,6 +873,10 @@ function playNextAudio(generation = playbackGeneration) {
   if (!audioQueue.length) {
     activeAudioSource = null;
     playingAudio = false;
+    if (repeatActive) {
+      completeRepeatIfDrained();
+      return;
+    }
     notifyTTSPlaybackDone();
     if (turnComplete) finishTurn();
     return;
@@ -855,6 +904,79 @@ function playNextAudio(generation = playbackGeneration) {
 
 function notifyTTSPlaybackDone() {
   signalPlaybackDone('playback_complete');
+}
+
+function requestRepeat() {
+  if (
+    !repeatAvailable ||
+    repeatActive ||
+    appState !== 'ready' ||
+    capturePhase !== 'idle' ||
+    captureStopPending ||
+    captureCommitLocked ||
+    playingAudio ||
+    audioQueue.length > 0 ||
+    !serverReady ||
+    !socketOpen()
+  ) {
+    return false;
+  }
+
+  try {
+    getAudioContext();
+  } catch (error) {
+    showError(`Audio unavailable: ${error.message}`);
+    return false;
+  }
+
+  playbackSuppressed = false;
+  ttsStarted = false;
+  ttsDoneSent = false;
+  repeatActive = true;
+  repeatDoneReceived = false;
+  showError('');
+
+  if (!send({ type: 'repeat' })) {
+    repeatActive = false;
+    syncRepeatControl();
+    return false;
+  }
+
+  setState('processing');
+  return true;
+}
+
+function completeRepeatIfDrained() {
+  if (
+    !repeatActive ||
+    !repeatDoneReceived ||
+    playingAudio ||
+    activeAudioSource ||
+    audioQueue.length > 0
+  ) {
+    return false;
+  }
+
+  notifyTTSPlaybackDone();
+  ttsStarted = false;
+  repeatActive = false;
+  repeatDoneReceived = false;
+  resetCaptureControl();
+  if (!captureWanted) setState(serverReady && socketOpen() ? 'ready' : 'offline');
+  return true;
+}
+
+function finishUnavailableRepeat() {
+  if (playingAudio || activeAudioSource || audioQueue.length > 0) {
+    repeatDoneReceived = true;
+    return false;
+  }
+  ttsStarted = false;
+  repeatActive = false;
+  repeatDoneReceived = false;
+  showError('Repeat is not available for this turn.');
+  resetCaptureControl();
+  if (!captureWanted) setState(serverReady && socketOpen() ? 'ready' : 'offline');
 }
 
 function finishTurn() {
@@ -915,6 +1037,7 @@ function handleMessage(message) {
       break;
 
     case 'audio_delta':
+      if (playbackSuppressed) break;
       setState('speaking');
       enqueueAudio(message.audio);
       break;
@@ -927,12 +1050,27 @@ function handleMessage(message) {
       }
       break;
 
+    case 'repeat_done':
+      if (!repeatActive) break;
+      if (message.skip_reason) {
+        finishUnavailableRepeat();
+        break;
+      }
+      repeatDoneReceived = true;
+      completeRepeatIfDrained();
+      break;
+
     case 'ping':
       send({ type: 'pong' });
       break;
 
     case 'error':
       showError(message.message || 'Flow could not complete this turn.');
+      if (repeatActive) {
+        repeatDoneReceived = true;
+        if (!playingAudio && !audioQueue.length) finishUnavailableRepeat();
+        break;
+      }
       if (!captureWanted && !playingAudio) {
         resetCaptureControl({ invalidateGeneration: true });
         setState('ready');

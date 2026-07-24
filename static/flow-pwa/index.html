@@ -532,6 +532,10 @@
       transition: color 0.15s ease;
     }
     .act-btn.is-copied { color: rgba(255,255,255,0.55); }
+    .act-btn:disabled {
+      color: rgba(255,255,255,0.28);
+      cursor: default;
+    }
     .act-btn svg {
       flex: 0 0 auto;
       display: block;
@@ -665,6 +669,11 @@
         <path d="M8 1v9M5 4l3-3 3 3"/>
         <path d="M3 10v4h10v-4"/>
       </symbol>
+      <!-- Repeat (last actions) -->
+      <symbol id="ico-repeat" viewBox="0 0 16 16">
+        <path d="M13.5 5.5A6 6 0 1 0 14 10"/>
+        <path d="M10.5 2.5h3v3"/>
+      </symbol>
     </defs>
   </svg>
 
@@ -758,6 +767,11 @@
             <svg width="11" height="11"><use href="#ico-share"/></svg>
             Share
           </button>
+          <button class="act-btn" id="repeatBtn" type="button"
+                  aria-label="Repeat last translation" hidden disabled>
+            <svg width="11" height="11" aria-hidden="true"><use href="#ico-repeat"/></svg>
+            Repeat
+          </button>
         </div>
       </div>
 
@@ -771,6 +785,6 @@
     </div>
   </div>
 
-  <script src="/static/flow-pwa/app.js?v=9"></script>
+  <script src="/static/flow-pwa/app.js?v=10"></script>
 </body>
 </html>

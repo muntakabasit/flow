@@ -141,7 +141,7 @@ function loadApp() {
     'orbBtn', 'orbPress', 'orbWrap', 'orbIconUse', 'orbLabel', 'connDot',
     'stateLabel', 'dirLabel', 'dirOverOrb', 'panel', 'emptyState', 'turnsList',
     'lastActions', 'lastSrc', 'lastTgt', 'copyBtn', 'copyIcon', 'copyLabel',
-    'shareBtn', 'errorText', 'reconnectButton'
+    'shareBtn', 'repeatBtn', 'errorText', 'reconnectButton'
   ];
   const elements = new Map(ids.map(id => [id, new FakeElement()]));
   const storage = new Map();
