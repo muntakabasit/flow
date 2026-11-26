@@ -21,8 +21,9 @@ This directory holds the **DAWT Design Intelligence / Front-End Quality Guardian
 | 04 | [First Encounter: Before the First Task](04_FLOW_FIRST_ENCOUNTER_ONBOARDING_2026-11-25.md) | Human-origin onboarding/entry inquiry; no new UI or build authorised | [Issue #1 comment 7171804466](https://github.com/muntakabasit/flow/issues/1#issuecomment-7171804466) |
 | 05 | [Study 001: Independent Quality Failure Assessment](05_FLOW_V3_STUDY_001_INDEPENDENT_QA_PUBLIC_2026-11-25.md) | **FAIL to earn Yard acceptance**; public-safe assessment; private study input withheld | Original inspection on MacBook; no raw private source published |
 | 06 | [Flow × Muse: Just-in-Time Resource Experience](06_FLOW_MUSE_JIT_RESOURCE_EXPERIENCE_2026-11-25.md) | Candidate; neither product-scope change nor live connector authority | [Issue #1 comment 7176348789](https://github.com/muntakabasit/flow/issues/1#issuecomment-7176348789) |
+| 07 | [Connected onboarding HUMAN FAIL: recognition before inbox](07_FLOW_CONNECTED_ONBOARDING_HUMAN_FAIL_CORRECTION_2026-11-26.md) | **Human rejection of Gmail-list primary encounter; design correction for existing real app** | [Flow owner human FAIL](https://github.com/muntakabasit/flow/issues/1#issuecomment-7182483277) |
 
-These entries cover this DAWT Design responsibility's substantive Flow-facing contributions available in the reviewed 25 November Issue #1 record **plus the independent local Study 001 Yard review**. External contributions from Quiet Reader, Uncle Sam, JANGODOM and DAWT Legal remain attributed to their own owners and are not mislabeled as ours.
+These entries cover this DAWT Design responsibility's substantive Flow-facing contributions available in the reviewed 25 November Issue #1 record **plus the independent local Study 001 Yard review and the subsequent 26 November connected-onboarding HUMAN FAIL correction**. External contributions from Quiet Reader, Uncle Sam, JANGODOM and DAWT Legal remain attributed to their own owners and are not mislabeled as ours.
 
 ## Related controlling and donor sources
 
@@ -54,6 +55,6 @@ Every contribution should identify:
 
 ## Current cross-project priority
 
-Study **first human encounter / appropriate source intake** before treating the current annotation specimen as Flow's product entry. Then prove a real task using authorised material and an inspectable original. JIT cross-provider machinery remains a bounded research candidate. The first Flow V3 study's negative evidence is **retained**, not wiped by a cosmetic redesign.
+**26 November 2026 update:** The connected Gmail onboarding has received a direct human FAIL: account transport worked in worker reports, but arriving at a Gmail list recreated the incumbent source-selection/reading burden. See [Design Yard 007](07_FLOW_CONNECTED_ONBOARDING_HUMAN_FAIL_CORRECTION_2026-11-26.md) and [the Flow owner verdict](https://github.com/muntakabasit/flow/issues/1#issuecomment-7182483277). The existing real app needs intention/relationship-first correction under properly admitted implementation, while preserving working Google machinery and treating the long-message comprehension defect as a separate integrity gate. Do not make another standalone prototype, generic chatbot or data-source dashboard. The Flow V3 Study 001 negative evidence remains preserved. JIT cross-provider machinery remains governed independently.
 
 **Keeper:** One standard of care, a recognisable Flow identity, truthful assistance, less human coordination work, and actual acceptance proved rather than asserted.
